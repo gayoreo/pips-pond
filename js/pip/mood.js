@@ -6,13 +6,18 @@ export const MOOD_LABEL = {
 
 export function moodFor(b) {
   if (b.phase !== 'during' || b.dayOff) return 'sleeping';
-  const parts = [b.swipes, b.points].filter((p) => p.total > 0);
-  if (parts.some((p) => p.leftToday < -0.004 || p.leftWeek < -0.004)) return 'sad';
-  if (parts.some((p) => p.daily > 0 && p.leftToday < p.daily * 0.25)) return 'worried';
+  const p = b.points;
+  const s = b.swipes;
+
+  const pointsOver = p.total > 0 && (p.leftToday < -0.004 || p.leftWeek < -0.004);
+  // Swipes are whole: with <1 swipe/day, "today" can be 0, so only the week counts then.
+  const swipesOver = s.total > 0 && (s.leftWeek < 0 || (s.daily >= 1 && s.leftToday < 0));
+  if (pointsOver || swipesOver) return 'sad';
+
+  if (p.total > 0 && p.daily > 0 && p.leftToday < p.daily * 0.25) return 'worried';
   return 'happy';
 }
 
-// Short "eating" moment after you log something.
 let eatingUntil = 0;
 
 export function startEating(ms = 1300) {

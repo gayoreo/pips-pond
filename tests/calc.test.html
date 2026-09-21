@@ -38,7 +38,7 @@
     check('start of week for Wed Sep 2', startOfWeek('2026-09-02', 0), '2026-08-30');
 
     let b = budget(s, [], '2026-09-01');
-    check('day 1 daily swipes', b.swipes.daily, 1.25);
+    check('day 1 daily swipes (1.25 → 1)', b.swipes.daily, 1);
     check('day 1 daily points', b.points.daily, 12.5);
     check('week 1 weekly swipes (4 of 8 days)', b.swipes.weekly, 5);
 
@@ -47,10 +47,10 @@
       { type: 'points', amount: 20, date: '2026-09-01' },
     ];
     b = budget(s, e, '2026-09-01');
-    check('over today after 2 swipes', b.swipes.leftToday, -0.75);
+    check('over today after 2 swipes', b.swipes.leftToday, -1);
 
     b = budget(s, e, '2026-09-02');
-    check('day 2 recalculated swipes (8 / 7 days)', b.swipes.daily, 8 / 7);
+    check('day 2 recalculated swipes (8/7 → 1)', b.swipes.daily, 1);
     check('day 2 recalculated points (80 / 7 days)', b.points.daily, 80 / 7);
 
     b = budget(s, e, '2026-09-05');
@@ -67,6 +67,13 @@
 
     b = budget(s, e, '2026-09-07');
     check('new week gets full remaining balance', b.swipes.weekly, 8);
+
+    const s7 = { ...s, swipesTotal: 7 };
+    check('whole swipes: 0.875/day → 1', budget(s7, [], '2026-09-01').swipes.daily, 1);
+    check('whole swipes: 3.5/week → 4', budget(s7, [], '2026-09-01').swipes.weekly, 4);
+
+    check('exchanges allowed on Wednesday', budget(s, [], '2026-09-02').exchanges.allowedToday, true);
+    check('exchanges NOT allowed on Saturday', budget(s, [], '2026-09-05').exchanges.allowedToday, false);
 
     document.getElementById('summary').textContent = `${passed} passed, ${failed} failed`;
   </script>

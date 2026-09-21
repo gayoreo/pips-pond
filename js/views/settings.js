@@ -1,5 +1,5 @@
 import { getSettings, saveSettings, getEntries, addEntry, resetAll, getTheme, setTheme } from '../data/db.js';
-import { budget } from '../core/calc.js';
+import { budget, exchangeDaysOf, DEFAULT_EXCHANGE_DAYS } from '../core/calc.js';
 import { todayKey, addDays, formatShort } from '../core/dates.js';
 import { esc, count, applyTheme } from '../ui/dom.js';
 import { toast } from '../ui/toast.js';
@@ -19,15 +19,15 @@ function defaults() {
   return {
     semesterName: seasonName(start), start, end: addDays(start, 104), weekStart: 0,
     swipesTotal: '', pointsTotal: '', swipesRollover: false, pointsRollover: false,
-    exchangeLimit: 2, exchangeUsesSwipe: false, daysOff: [],
+    exchangeLimit: 2, exchangeUsesSwipe: false, exchangeDays: DEFAULT_EXCHANGE_DAYS,
+    daysOff: [], keypad: 'regular', logView: 'calendar',
   };
 }
 
 const rangeText = (d) => (d.from === d.to ? formatShort(d.from) : `${formatShort(d.from)} – ${formatShort(d.to)}`);
 
 function renderDaysOff(root) {
-  const list = root.querySelector('#days-off-list');
-  list.innerHTML = draftDaysOff.length
+  root.querySelector('#days-off-list').innerHTML = draftDaysOff.length
     ? draftDaysOff.map((d, i) => `
         <span class="tape">${esc(d.label)} · ${rangeText(d)}
           <button type="button" data-remove="${i}" aria-label="Remove ${esc(d.label)}">✕</button>
@@ -50,23 +50,28 @@ function readForm(form) {
     pointsRollover: f.has('pointsRollover'),
     exchangeLimit: num('exchangeLimit'),
     exchangeUsesSwipe: f.has('exchangeUsesSwipe'),
+    exchangeDays: f.getAll('exchangeDays').map(Number),
+    keypad: String(f.get('keypad')),
+    logView: String(f.get('logView')),
     daysOff: draftDaysOff,
   };
 }
 
 function problemWith(s) {
-  const ok = (n) => Number.isFinite(n) && n >= 0;
+  const whole = (n) => Number.isInteger(n) && n >= 0;
   if (!s.start || !s.end) return 'Pick the semester start and end dates.';
   if (s.end < s.start) return 'The end date is before the start date.';
-  if (!ok(s.swipesTotal) || !ok(s.pointsTotal)) return 'Enter your swipes and points (0 is fine).';
-  if (!ok(s.exchangeLimit)) return 'Enter your weekly exchange limit (0 is fine).';
+  if (!whole(s.swipesTotal)) return 'Swipes must be a whole number (0 is fine).';
+  if (!(Number.isFinite(s.pointsTotal) && s.pointsTotal >= 0)) return 'Enter your points (0 is fine).';
+  if (!whole(s.exchangeLimit)) return 'The exchange limit must be a whole number (0 is fine).';
   return null;
 }
 
 export async function renderSettings(root) {
   const saved = await getSettings();
-  const s = saved ?? defaults();
+  const s = { ...defaults(), ...(saved ?? {}) };
   draftDaysOff = (s.daysOff ?? []).map((d) => ({ ...d }));
+  const exDays = exchangeDaysOf(s);
   const b = saved ? budget(saved, await getEntries(), todayKey()) : null;
   const theme = getTheme();
 
@@ -105,6 +110,11 @@ export async function renderSettings(root) {
       <section class="card">
         <h2 class="card__title card__title--plum">Exchanges</h2>
         <label class="field">Max per week<input type="number" name="exchangeLimit" inputmode="numeric" min="0" step="1" value="${esc(s.exchangeLimit)}"></label>
+        <fieldset class="days-pick">
+          <legend class="field">Allowed on</legend>
+          ${DAYS.map((d, i) => `
+            <label class="daychip"><input type="checkbox" name="exchangeDays" value="${i}"${exDays.includes(i) ? ' checked' : ''}><span>${d.slice(0, 3)}</span></label>`).join('')}
+        </fieldset>
         <label class="row"><span>An exchange also uses a swipe</span><input type="checkbox" class="switch" name="exchangeUsesSwipe"${s.exchangeUsesSwipe ? ' checked' : ''}></label>
         <p class="card__hint">Resets each week. Unused exchanges don’t carry over.</p>
       </section>
@@ -121,6 +131,23 @@ export async function renderSettings(root) {
         <p class="card__hint">Days off are left out of your daily budget. Remember to save.</p>
       </section>
 
+      <section class="card">
+        <h2 class="card__title">Logging</h2>
+        <label class="field">Keypad
+          <select name="keypad">
+            <option value="regular"${s.keypad !== 'cents' ? ' selected' : ''}>Type the dot (4 . 7 5)</option>
+            <option value="cents"${s.keypad === 'cents' ? ' selected' : ''}>Cents (4 7 5 → $4.75)</option>
+          </select>
+        </label>
+        <label class="field">Log tab layout
+          <select name="logView">
+            <option value="calendar"${s.logView !== 'journal' ? ' selected' : ''}>Calendar + day page</option>
+            <option value="journal"${s.logView === 'journal' ? ' selected' : ''}>Journal pages</option>
+          </select>
+        </label>
+        ${saved ? '<a class="btn-plain" href="#/favorites">Edit favorites →</a>' : ''}
+      </section>
+
       <button type="submit" class="btn-sketch btn-sketch--go btn-sketch--big">${saved ? 'Save changes' : 'Start my pond'}</button>
     </form>
 
@@ -129,7 +156,7 @@ export async function renderSettings(root) {
       <h2 class="card__title">Match my card</h2>
       <p class="card__hint">Started mid-semester, or the numbers drifted? Enter what your card shows and Pip logs an adjustment.</p>
       <div class="grid-2">
-        <label class="field">Swipes now<input id="match-swipes" type="number" inputmode="decimal" min="0" step="any" placeholder="${esc(count(b.swipes.balance))}"></label>
+        <label class="field">Swipes now<input id="match-swipes" type="number" inputmode="numeric" min="0" step="1" placeholder="${esc(count(b.swipes.balance))}"></label>
         <label class="field">Points now<input id="match-points" type="number" inputmode="decimal" min="0" step="0.01" placeholder="${esc(b.points.balance.toFixed(2))}"></label>
       </div>
       <button type="button" class="btn-sketch" id="match-go">Match</button>
@@ -149,7 +176,6 @@ export async function renderSettings(root) {
     </section>` : ''}`;
 
   renderDaysOff(root);
-
   const form = root.querySelector('#settings-form');
 
   form.addEventListener('submit', async (e) => {
@@ -158,12 +184,7 @@ export async function renderSettings(root) {
     const problem = problemWith(next);
     if (problem) return toast(problem);
     await saveSettings({ ...(saved ?? {}), ...next });
-    if (!saved) {
-      location.hash = '#/pond';
-      toast('Welcome to the pond!');
-    } else {
-      toast('Saved!');
-    }
+    if (!saved) { location.hash = '#/pond'; toast('Welcome to the pond!'); } else { toast('Saved!'); }
   });
 
   root.querySelector('#off-add').addEventListener('click', () => {
@@ -174,9 +195,7 @@ export async function renderSettings(root) {
     if (to < from) return toast('The last day is before the first day.');
     draftDaysOff.push({ from, to, label });
     draftDaysOff.sort((a, c) => a.from.localeCompare(c.from));
-    root.querySelector('#off-from').value = '';
-    root.querySelector('#off-to').value = '';
-    root.querySelector('#off-label').value = '';
+    ['#off-from', '#off-to', '#off-label'].forEach((sel) => { root.querySelector(sel).value = ''; });
     renderDaysOff(root);
   });
 
@@ -197,18 +216,20 @@ export async function renderSettings(root) {
 
   root.querySelector('#match-go')?.addEventListener('click', async () => {
     const current = budget(await getSettings(), await getEntries(), todayKey());
-    const sw = parseFloat(root.querySelector('#match-swipes').value);
-    const pt = parseFloat(root.querySelector('#match-points').value);
+    const swRaw = root.querySelector('#match-swipes').value;
+    const ptRaw = root.querySelector('#match-points').value;
+    if (!swRaw && !ptRaw) return toast('Type what your card shows first.');
     let changed = 0;
-    if (Number.isFinite(sw)) {
-      const d = Math.round((sw - current.swipes.balance) * 10) / 10;
+    if (swRaw) {
+      const sw = Number(swRaw);
+      if (!Number.isInteger(sw) || sw < 0) return toast('Swipes must be a whole number.');
+      const d = sw - current.swipes.balance;
       if (d !== 0) { await addEntry({ type: 'adjust-swipes', amount: d }); changed++; }
     }
-    if (Number.isFinite(pt)) {
-      const d = Math.round((pt - current.points.balance) * 100) / 100;
+    if (ptRaw) {
+      const d = Math.round((Number(ptRaw) - current.points.balance) * 100) / 100;
       if (d !== 0) { await addEntry({ type: 'adjust-points', amount: d }); changed++; }
     }
-    if (!Number.isFinite(sw) && !Number.isFinite(pt)) return toast('Type what your card shows first.');
     toast(changed ? 'Pip updated your balances.' : 'Already matches your card!');
     renderSettings(root);
   });

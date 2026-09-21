@@ -1,14 +1,13 @@
-import { getSettings, getEntries, addEntry } from '../data/db.js';
+import { getSettings, getEntries, getFavorites } from '../data/db.js';
 import { budget } from '../core/calc.js';
 import { todayKey, formatLong, formatShort } from '../core/dates.js';
-import { moodFor, isEating, startEating, MOOD_LABEL } from '../pip/mood.js';
+import { moodFor, isEating, MOOD_LABEL } from '../pip/mood.js';
 import { pipLine } from '../pip/lines.js';
 import { frogSVG } from '../pip/frog.js';
 import { esc, money, count } from '../ui/dom.js';
-import { toast } from '../ui/toast.js';
-import { openFeedSheet } from './feed.js';
+import { openFeedSheet, quickLog, describe } from './feed.js';
 
-const RING = 2 * Math.PI * 40; // circumference of the r=40 ring
+const RING = 2 * Math.PI * 40;
 
 function noteHTML(kind, label, p, fmt) {
   const over = p.leftToday < -0.004;
@@ -39,22 +38,37 @@ function stampsHTML(ex, resets) {
   const slots = Math.max(ex.limit, ex.used);
   const stamps = Array.from({ length: slots }, (_, i) => {
     if (i >= ex.used) return '<span class="stamp" aria-hidden="true"></span>';
-    const extra = i >= ex.limit;
-    return `<span class="stamp is-used${extra ? ' is-over' : ''}" aria-hidden="true">USED</span>`;
+    return `<span class="stamp is-used${i >= ex.limit ? ' is-over' : ''}" aria-hidden="true">USED</span>`;
   }).join('');
+  const notes = [];
+  if (!ex.allowedToday) notes.push('not available today');
+  if (ex.used > ex.limit) notes.push('over the weekly limit');
+  notes.push(`resets ${formatShort(resets)}`);
   return `
   <section class="stamps" aria-label="Exchanges: ${ex.used} of ${ex.limit} used this week">
     <div>
       <p class="stamps__title">Exchanges this week</p>
-      <p class="stamps__sub">${ex.used > ex.limit ? 'over the weekly limit · ' : ''}resets ${formatShort(resets)}</p>
+      <p class="stamps__sub" id="ex-note">${notes.join(' · ')}</p>
     </div>
     <div class="stamps__row">${stamps}</div>
   </section>`;
 }
 
+function favRowHTML(favorites) {
+  if (!favorites.length) {
+    return '<div class="fav-row"><a class="fav-row__edit fav-row__edit--start" href="#/favorites">+ save a favorite order</a></div>';
+  }
+  return `
+  <div class="fav-row">
+    <span class="fav-row__label">favs:</span>
+    ${favorites.slice(0, 4).map((f) => `<button type="button" class="fav fav--${f.type}" data-fav="${esc(f.id)}">${esc(f.name)} ${esc(describe(f.type, f.amount))}</button>`).join('')}
+    <a class="fav-row__edit" href="#/favorites">edit</a>
+  </div>`;
+}
+
 function phaseHTML(b, settings) {
   if (b.phase === 'before') return `<section class="card"><p class="hand">Semester starts ${formatShort(settings.start)}. Pip is napping until then.</p></section>`;
-  if (b.phase === 'after') return `<section class="card"><p class="hand">The semester's over! Pip is resting. You can set up a new semester in Settings.</p></section>`;
+  if (b.phase === 'after') return '<section class="card"><p class="hand">The semester’s over! Pip is resting.</p></section>';
   return '';
 }
 
@@ -63,6 +77,7 @@ export async function renderPond(root) {
   if (!settings) { location.hash = '#/settings'; return; }
 
   const entries = await getEntries();
+  const favorites = await getFavorites();
   const today = todayKey();
   const b = budget(settings, entries, today);
   const mood = isEating() ? 'eating' : moodFor(b);
@@ -93,27 +108,26 @@ export async function renderPond(root) {
 
     ${stampsHTML(b.exchanges, b.weekResets)}
 
-    <section aria-label="Feed Pip">
+    <section aria-label="Feed Pip" data-feed-area>
       <p class="feed__title">Feed Pip:</p>
       <div class="feed-row">
         <button type="button" class="btn-sketch btn-sketch--swipe" data-feed="swipe">a swipe</button>
         <button type="button" class="btn-sketch btn-sketch--points" data-feed="points">points</button>
-        <button type="button" class="btn-sketch btn-sketch--exchange" data-feed="exchange">exchange</button>
+        <button type="button" class="btn-sketch btn-sketch--exchange" data-feed="exchange"${b.exchanges.allowedToday ? '' : ' disabled aria-describedby="ex-note"'}>exchange</button>
       </div>
+      ${favRowHTML(favorites)}
     </section>`;
 
-  root.querySelector('.feed-row').addEventListener('click', async (e) => {
-    const btn = e.target.closest('[data-feed]');
-    if (!btn) return;
-    const kind = btn.dataset.feed;
-
-    if (kind === 'points') return openFeedSheet({ type: 'points' });
-
-    if (kind === 'exchange' && b.exchanges.used >= b.exchanges.limit &&
-        !confirm(`That's past your ${b.exchanges.limit} exchanges this week. Log it anyway?`)) return;
-
-    startEating();
-    await addEntry({ type: kind, amount: 1 });
-    toast(kind === 'swipe' ? 'Pip ate a swipe!' : 'Pip ate an exchange!');
+  root.querySelector('[data-feed-area]').addEventListener('click', (e) => {
+    const feed = e.target.closest('[data-feed]');
+    if (feed) {
+      if (feed.dataset.feed === 'points') return openFeedSheet({ type: 'points' });
+      return quickLog({ type: feed.dataset.feed, amount: 1 });
+    }
+    const chip = e.target.closest('[data-fav]');
+    if (chip) {
+      const f = favorites.find((x) => x.id === chip.dataset.fav);
+      if (f) quickLog({ type: f.type, amount: f.amount, label: `${f.name} (${describe(f.type, f.amount)})` });
+    }
   });
 }

@@ -1,4 +1,4 @@
-import { money, count } from '../ui/dom.js';
+import { money, plural } from '../ui/dom.js';
 
 const FLAVOR = {
   happy: [
@@ -26,13 +26,13 @@ function numbers(mood, b) {
   const s = b.swipes;
   if (mood === 'sad') {
     if (p.total > 0 && p.leftToday < -0.004) return `${money(-p.leftToday)} over today.`;
-    if (s.total > 0 && s.leftToday < -0.04) return `${count(-s.leftToday)} swipes over today.`;
+    if (s.total > 0 && s.daily >= 1 && s.leftToday < 0) return `${plural(-s.leftToday, 'swipe')} over today.`;
     if (p.total > 0 && p.leftWeek < -0.004) return `${money(-p.leftWeek)} over this week.`;
-    return `${count(-s.leftWeek)} swipes over this week.`;
+    return `${plural(-s.leftWeek, 'swipe')} over this week.`;
   }
   const bits = [];
-  if (p.total > 0) bits.push(money(p.leftToday));
-  if (s.total > 0) bits.push(`${count(s.leftToday)} ${count(s.leftToday) === '1' ? 'swipe' : 'swipes'}`);
+  if (p.total > 0) bits.push(money(Math.max(0, p.leftToday)));
+  if (s.total > 0) bits.push(plural(Math.max(0, s.leftToday), 'swipe'));
   return bits.length ? `${bits.join(' and ')} left today!` : '';
 }
 

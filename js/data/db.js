@@ -4,11 +4,12 @@ const KEY = 'pips-pond:v1';
 const THEME_KEY = 'pips-pond:theme';
 export const CHANGE_EVENT = 'pond:changed';
 
-const empty = () => ({ settings: null, entries: [] });
+const empty = () => ({ settings: null, entries: [], favorites: [] });
 
 function load() {
   try {
-    return JSON.parse(localStorage.getItem(KEY)) ?? empty();
+    const data = JSON.parse(localStorage.getItem(KEY));
+    return data ? { ...empty(), ...data } : empty();
   } catch {
     return empty();
   }
@@ -22,6 +23,7 @@ function save(data) {
 const newId = () =>
   crypto.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
+// ---------- settings ----------
 export async function getSettings() {
   return load().settings;
 }
@@ -32,6 +34,7 @@ export async function saveSettings(settings) {
   save(data);
 }
 
+// ---------- entries ----------
 export async function getEntries() {
   return load().entries.filter((e) => !e.deleted);
 }
@@ -58,9 +61,36 @@ export async function updateEntry(id, patch) {
 }
 
 export async function deleteEntry(id) {
-  return updateEntry(id, { deleted: true }); // soft delete, so sync can pass it along later
+  return updateEntry(id, { deleted: true });
 }
 
+// ---------- favorites ----------
+export async function getFavorites() {
+  return load().favorites;
+}
+
+export async function addFavorite({ name, type, amount }) {
+  const data = load();
+  data.favorites.push({ id: newId(), name, type, amount: Number(amount) });
+  save(data);
+}
+
+export async function deleteFavorite(id) {
+  const data = load();
+  data.favorites = data.favorites.filter((f) => f.id !== id);
+  save(data);
+}
+
+export async function moveFavorite(id, dir) {
+  const data = load();
+  const i = data.favorites.findIndex((f) => f.id === id);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= data.favorites.length) return;
+  [data.favorites[i], data.favorites[j]] = [data.favorites[j], data.favorites[i]];
+  save(data);
+}
+
+// ---------- misc ----------
 export async function resetAll() {
   localStorage.removeItem(KEY);
   window.dispatchEvent(new Event(CHANGE_EVENT));

@@ -32,7 +32,6 @@ export function isDayOff(key, daysOff = []) {
   return daysOff.some((r) => key >= r.from && key <= r.to);
 }
 
-// Counts days from..to (inclusive) that are NOT days off.
 export function eatingDays(from, to, daysOff = []) {
   let n = 0;
   for (let k = from; k <= to; k = addDays(k, 1)) {
@@ -41,8 +40,29 @@ export function eatingDays(from, to, daysOff = []) {
   return n;
 }
 
+// ---- months (for the calendar) ----
+export const monthKey = (key) => key.slice(0, 7); // "2026-09"
+
+export function addMonths(ym, n) {
+  const [y, m] = ym.split('-').map(Number);
+  const d = new Date(y, m - 1 + n, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+export function daysInMonth(ym) {
+  const [y, m] = ym.split('-').map(Number);
+  return new Date(y, m, 0).getDate();
+}
+
+// ---- display ----
 export const formatLong = (key) =>
   fromKey(key).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
 
 export const formatShort = (key) =>
   fromKey(key).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+
+export const formatMonth = (ym) =>
+  fromKey(`${ym}-01`).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+
+export const formatTime = (iso) =>
+  new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });

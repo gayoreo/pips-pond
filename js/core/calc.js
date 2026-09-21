@@ -1,7 +1,12 @@
-import { addDays, startOfWeek, eatingDays, isDayOff, maxKey, minKey } from './dates.js';
+import { addDays, startOfWeek, eatingDays, isDayOff, maxKey, minKey, dayOfWeek } from './dates.js';
 
-// How much one entry takes from each balance.
-// Adjustments ("match my card") are negative spending: they add back.
+export const DEFAULT_EXCHANGE_DAYS = [1, 2, 3, 4, 5]; // Mon–Fri
+export const exchangeDaysOf = (s) => (Array.isArray(s?.exchangeDays) ? s.exchangeDays : DEFAULT_EXCHANGE_DAYS);
+export const exchangeAllowedOn = (s, key) => exchangeDaysOf(s).includes(dayOfWeek(key));
+
+// Swipes only come in whole numbers, so their allowances are rounded.
+const WHOLE = { swipes: true, points: false };
+
 function effect(entry, settings) {
   const a = Number(entry.amount) || 0;
   switch (entry.type) {
@@ -55,11 +60,12 @@ export function budget(settings, entries, today) {
   const daysThisWeek = weekFrom > weekTo ? 0 : eatingDays(weekFrom, weekTo, daysOff);
 
   const part = (k) => {
+    const r = WHOLE[k] ? Math.round : (x) => x;
     const balance = totals[k] - spentAll[k] - adj[k];
     const startToday = totals[k] - spentBeforeToday[k] - adj[k];
     const startWeek = totals[k] - spentBeforeWeek[k] - adj[k];
-    const daily = dayOff || daysLeft === 0 ? 0 : startToday / daysLeft;
-    const weekly = daysFromWeek === 0 ? 0 : (startWeek * daysThisWeek) / daysFromWeek;
+    const daily = dayOff || daysLeft === 0 ? 0 : r(startToday / daysLeft);
+    const weekly = daysFromWeek === 0 ? 0 : r((startWeek * daysThisWeek) / daysFromWeek);
     return {
       total: totals[k],
       balance,
@@ -81,6 +87,11 @@ export function budget(settings, entries, today) {
     weekStart, weekResets: addDays(weekEnd, 1),
     swipes: part('swipes'),
     points: part('points'),
-    exchanges: { used: exchangesUsed, limit, left: limit - exchangesUsed },
+    exchanges: {
+      used: exchangesUsed,
+      limit,
+      left: limit - exchangesUsed,
+      allowedToday: exchangeAllowedOn(settings, today),
+    },
   };
 }

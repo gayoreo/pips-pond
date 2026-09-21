@@ -373,3 +373,31 @@
 }
 .daychip input:checked + span { background: var(--plum-note); border-width: 3px; }
 .daychip input:focus-visible + span { outline: 3px solid var(--swipe); outline-offset: 2px; }
+
+/* ---------- Tutorial ---------- */
+body.no-tabs #app { padding-bottom: calc(env(safe-area-inset-bottom) + 24px); }
+.tutorial { display: flex; flex-direction: column; gap: 14px; min-height: calc(100dvh - 60px); }
+.tutorial__top { display: flex; align-items: center; justify-content: space-between; min-height: 44px; }
+.tutorial .page-title:focus { outline: none; }
+.tutorial__body { flex: 1; }
+.tutorial__body p { margin: 0; font-size: 17px; }
+.t-list { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 10px; font-size: 17px; }
+.t-swipe { color: var(--swipe); }
+.t-points { color: var(--points); }
+.t-plum { color: var(--plum); }
+.t-moods { display: grid; gap: 12px; }
+.t-mood { display: flex; align-items: center; gap: 12px; }
+.t-mood__label { font-size: 24px; }
+.mini-frog { width: 72px; height: 72px; flex-shrink: 0; }
+.mini-frog svg { width: 100%; height: 100%; }
+.tutorial__dots { display: flex; justify-content: center; gap: 8px; }
+.tutorial__dots span { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--ink); }
+.tutorial__dots .is-on { background: var(--green-fill); }
+.tutorial__nav { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; }
+
+/* ---------- Fixes from the code check ---------- */
+.stat__v { font-size: 15px; white-space: nowrap; overflow-wrap: normal; }
+.toast {
+  top: calc(env(safe-area-inset-top) + 12px);
+  bottom: auto;
+}

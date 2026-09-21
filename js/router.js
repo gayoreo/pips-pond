@@ -2,14 +2,16 @@ import { renderPond } from './views/pond.js';
 import { renderLog } from './views/log.js';
 import { renderSettings } from './views/settings.js';
 import { renderFavorites } from './views/favorites.js';
+import { renderTutorial } from './views/tutorial.js';
 import { CHANGE_EVENT } from './data/db.js';
 
-// tab: shows in the bottom bar · live: re-renders when data changes
+// tab: in bottom bar · live: re-render on data change · bare: full screen, no tab bar
 const routes = {
   '#/pond':      { label: 'Pond',      render: renderPond,      tab: true, live: true },
   '#/log':       { label: 'Log',       render: renderLog,       tab: true, live: true },
   '#/settings':  { label: 'Settings',  render: renderSettings,  tab: true },
   '#/favorites': { label: 'Favorites', render: renderFavorites, live: true },
+  '#/welcome':   { label: 'Welcome',   render: renderTutorial,  bare: true },
 };
 const DEFAULT = '#/pond';
 
@@ -18,12 +20,15 @@ const tabs = document.getElementById('tabs');
 const current = () => (routes[location.hash] ? location.hash : DEFAULT);
 
 function renderTabs(active) {
+  const bare = Boolean(routes[active].bare);
+  document.body.classList.toggle('no-tabs', bare);
+  tabs.hidden = bare;
+  if (bare) return;
   const tabRoutes = Object.entries(routes).filter(([, r]) => r.tab);
   tabs.style.setProperty('--tab-count', tabRoutes.length);
   tabs.innerHTML = tabRoutes
     .map(([hash, r]) => `<a href="${hash}"${hash === active ? ' aria-current="page"' : ''}>${r.label}</a>`)
     .join('');
-  tabs.hidden = false;
 }
 
 let queue = Promise.resolve();

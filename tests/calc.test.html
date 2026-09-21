@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>calc.js tests</title>
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 16px; }
+    .pass { color: #1a7f37; } .fail { color: #b3261e; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <h1>calc.js tests</h1>
+  <p id="summary"></p>
+  <ol id="out"></ol>
+
+  <script type="module">
+    import { budget } from '../js/core/calc.js';
+    import { eatingDays, startOfWeek } from '../js/core/dates.js';
+
+    const out = document.getElementById('out');
+    let passed = 0, failed = 0;
+    function check(name, actual, expected) {
+      const ok = typeof expected === 'number' ? Math.abs(actual - expected) < 0.001 : actual === expected;
+      ok ? passed++ : failed++;
+      out.insertAdjacentHTML('beforeend',
+        `<li class="${ok ? 'pass' : 'fail'}">${ok ? '✓' : '✗'} ${name} — got ${actual}, expected ${expected}</li>`);
+    }
+
+    // Sep 1 2026 is a Tuesday. Week starts Sunday. Sep 5–6 are days off.
+    const s = {
+      start: '2026-09-01', end: '2026-09-10', weekStart: 0,
+      swipesTotal: 10, pointsTotal: 100,
+      exchangeLimit: 2, exchangeUsesSwipe: false,
+      daysOff: [{ from: '2026-09-05', to: '2026-09-06', label: 'Trip' }],
+    };
+
+    check('eating days (10 minus 2 off)', eatingDays(s.start, s.end, s.daysOff), 8);
+    check('start of week for Wed Sep 2', startOfWeek('2026-09-02', 0), '2026-08-30');
+
+    let b = budget(s, [], '2026-09-01');
+    check('day 1 daily swipes', b.swipes.daily, 1.25);
+    check('day 1 daily points', b.points.daily, 12.5);
+    check('week 1 weekly swipes (4 of 8 days)', b.swipes.weekly, 5);
+
+    const e = [
+      { type: 'swipe', amount: 2, date: '2026-09-01' },
+      { type: 'points', amount: 20, date: '2026-09-01' },
+    ];
+    b = budget(s, e, '2026-09-01');
+    check('over today after 2 swipes', b.swipes.leftToday, -0.75);
+
+    b = budget(s, e, '2026-09-02');
+    check('day 2 recalculated swipes (8 / 7 days)', b.swipes.daily, 8 / 7);
+    check('day 2 recalculated points (80 / 7 days)', b.points.daily, 80 / 7);
+
+    b = budget(s, e, '2026-09-05');
+    check('day off → no allowance', b.swipes.daily, 0);
+    check('day off flag', b.dayOff, true);
+
+    b = budget(s, [...e, { type: 'adjust-points', amount: 5, date: '2026-09-02' }], '2026-09-02');
+    check('adjustment adds $5 (85 / 7)', b.points.daily, 85 / 7);
+
+    const ex = [{ type: 'exchange', amount: 1, date: '2026-09-02' }];
+    check('exchange counted this week', budget(s, ex, '2026-09-02').exchanges.used, 1);
+    check('exchange does NOT use swipe', budget(s, ex, '2026-09-02').swipes.balance, 10);
+    check('exchange DOES use swipe (toggle on)', budget({ ...s, exchangeUsesSwipe: true }, ex, '2026-09-02').swipes.balance, 9);
+
+    b = budget(s, e, '2026-09-07');
+    check('new week gets full remaining balance', b.swipes.weekly, 8);
+
+    document.getElementById('summary').textContent = `${passed} passed, ${failed} failed`;
+  </script>
+</body>
+</html>

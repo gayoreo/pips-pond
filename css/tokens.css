@@ -1,0 +1,106 @@
+:root {
+  --paper: #FBF5E6;
+  --card: #FFFDF6;
+  --ink: #2B2A26;
+  --ink-2: #5F5949;
+  --line: #D9CFB6;
+  --green: #3E7D4F;
+  --green-fill: #7CC96B;
+  --green-dark: #1F4A28;
+  --on-green: #1F2A1C;
+  --pond: #CFE6D2;
+  --pad: #9CCB9F;
+  --ripple: #8DBB94;
+  --blue-note: #E3ECF9;
+  --blue-track: #C6D6EF;
+  --blue-line: #A9BEE0;
+  --swipe: #2F5DA8;
+  --yellow-note: #FCEFC4;
+  --yellow-track: #EFDB98;
+  --yellow-line: #DDBF6A;
+  --points: #8A5A00;
+  --points-ring: #C98A10;
+  --plum: #7A3E8C;
+  --plum-note: #EFE0F3;
+  --coral: #C8452F;
+  --tape: #E8DFC8;
+  --switch-off: #E8DFC8;
+  --shadow: rgba(43, 42, 38, 0.14);
+  --backdrop: rgba(43, 42, 38, 0.35);
+
+  --font-hand: "Gaegu", "Comic Sans MS", cursive;
+  --font-body: "Nunito", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  --wobble-1: 255px 15px 225px 15px / 15px 225px 15px 255px;
+  --wobble-2: 15px 225px 15px 255px / 255px 15px 225px 15px;
+  --wobble-3: 225px 15px 255px 15px / 15px 255px 15px 225px;
+
+  --tabs-h: 64px;
+  color-scheme: light;
+}
+
+:root[data-theme="night"] {
+  --paper: #1E1C18;
+  --card: #28251F;
+  --ink: #F1EADB;
+  --ink-2: #B8AE98;
+  --line: #4A443A;
+  --green: #8FD69A;
+  --green-fill: #4F9A5C;
+  --green-dark: #8FD69A;
+  --on-green: #0F1A0C;
+  --pond: #17362F;
+  --pad: #24574A;
+  --ripple: #2F6A5B;
+  --blue-note: #22324A;
+  --blue-track: #33496A;
+  --blue-line: #445C82;
+  --swipe: #9DBDF2;
+  --yellow-note: #3F3418;
+  --yellow-track: #5C4C22;
+  --yellow-line: #6E5B28;
+  --points: #F2C14E;
+  --points-ring: #F2C14E;
+  --plum: #D59BE3;
+  --plum-note: #3A2940;
+  --coral: #F08A74;
+  --tape: #3A352C;
+  --switch-off: #3A352C;
+  --shadow: rgba(0, 0, 0, 0.4);
+  --backdrop: rgba(0, 0, 0, 0.55);
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="auto"] {
+    --paper: #1E1C18;
+    --card: #28251F;
+    --ink: #F1EADB;
+    --ink-2: #B8AE98;
+    --line: #4A443A;
+    --green: #8FD69A;
+    --green-fill: #4F9A5C;
+    --green-dark: #8FD69A;
+    --on-green: #0F1A0C;
+    --pond: #17362F;
+    --pad: #24574A;
+    --ripple: #2F6A5B;
+    --blue-note: #22324A;
+    --blue-track: #33496A;
+    --blue-line: #445C82;
+    --swipe: #9DBDF2;
+    --yellow-note: #3F3418;
+    --yellow-track: #5C4C22;
+    --yellow-line: #6E5B28;
+    --points: #F2C14E;
+    --points-ring: #F2C14E;
+    --plum: #D59BE3;
+    --plum-note: #3A2940;
+    --coral: #F08A74;
+    --tape: #3A352C;
+    --switch-off: #3A352C;
+    --shadow: rgba(0, 0, 0, 0.4);
+    --backdrop: rgba(0, 0, 0, 0.55);
+    color-scheme: dark;
+  }
+}

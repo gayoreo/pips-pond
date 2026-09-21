@@ -135,7 +135,7 @@ export async function openFeedSheet({ type = 'points', entry = null, date = null
     }
     if (state.type === 'swipe') {
       const left = b.swipes.leftToday - n;
-      return left >= 0 ? `${plural(left, 'swipe')} left ${dayWord} after this!` : `That's ${plural(-left, 'swipe')} over ${dayWord}.`;
+      return left >= 0 ? `${plural(left, 'swipe')} left ${weekWord} after this!` : `That's ${plural(-left, 'swipe')} over ${weekWord}.`;
     }
     const diff = n - b.points.balance;
     return Math.abs(diff) < 0.005

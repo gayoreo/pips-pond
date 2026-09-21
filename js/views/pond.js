@@ -10,9 +10,18 @@ import { openFeedSheet, quickLog, describe } from './feed.js';
 const RING = 2 * Math.PI * 40;
 
 function noteHTML(kind, label, p, fmt) {
+  const isSwipes = kind === 'swipes';
   const over = p.leftToday < -0.004;
   const frac = p.daily > 0 ? Math.min(1, Math.max(0, p.leftToday / p.daily)) : 0;
-  const weekOver = p.leftWeek < -0.004;
+
+  const caption = isSwipes
+    ? (over ? 'over this week' : 'available today')
+    : (over ? 'over today' : 'left today');
+
+  const weekStat = isSwipes
+    ? `<span class="stat__v">${fmt(p.usedWeek)}</span><span class="stat__s">used of ${fmt(p.weekly)}</span>`
+    : `<span class="stat__v">${fmt(Math.abs(p.leftWeek))}</span><span class="stat__s">${p.leftWeek < -0.004 ? 'over' : 'left'}</span>`;
+
   return `
   <section class="note note--${kind}" aria-label="${label}">
     <span class="note__label">${label}</span>
@@ -26,9 +35,9 @@ function noteHTML(kind, label, p, fmt) {
       </svg>
       <span class="ring__value${over ? ' is-over' : ''}">${fmt(Math.abs(p.leftToday))}</span>
     </div>
-    <span class="note__caption">${over ? 'over today' : 'left today'}</span>
+    <span class="note__caption">${caption}</span>
     <div class="note__stats">
-      <div class="stat"><span class="stat__k">Week</span><span class="stat__v">${fmt(Math.abs(p.leftWeek))}</span><span class="stat__s">${weekOver ? 'over' : 'left'}</span></div>
+      <div class="stat"><span class="stat__k">Week</span>${weekStat}</div>
       <div class="stat"><span class="stat__k">Semester</span><span class="stat__v">${fmt(p.balance)}</span><span class="stat__s">of ${fmt(p.total)}</span></div>
     </div>
   </section>`;

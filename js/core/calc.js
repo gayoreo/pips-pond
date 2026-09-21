@@ -4,9 +4,6 @@ export const DEFAULT_EXCHANGE_DAYS = [1, 2, 3, 4, 5]; // Mon–Fri
 export const exchangeDaysOf = (s) => (Array.isArray(s?.exchangeDays) ? s.exchangeDays : DEFAULT_EXCHANGE_DAYS);
 export const exchangeAllowedOn = (s, key) => exchangeDaysOf(s).includes(dayOfWeek(key));
 
-// Swipes only come in whole numbers, so their allowances are rounded.
-const WHOLE = { swipes: true, points: false };
-
 function effect(entry, settings) {
   const a = Number(entry.amount) || 0;
   switch (entry.type) {
@@ -60,19 +57,36 @@ export function budget(settings, entries, today) {
   const daysThisWeek = weekFrom > weekTo ? 0 : eatingDays(weekFrom, weekTo, daysOff);
 
   const part = (k) => {
-    const r = WHOLE[k] ? Math.round : (x) => x;
     const balance = totals[k] - spentAll[k] - adj[k];
     const startToday = totals[k] - spentBeforeToday[k] - adj[k];
     const startWeek = totals[k] - spentBeforeWeek[k] - adj[k];
-    const daily = dayOff || daysLeft === 0 ? 0 : r(startToday / daysLeft);
-    const weekly = daysFromWeek === 0 ? 0 : r((startWeek * daysThisWeek) / daysFromWeek);
+    let weekly = daysFromWeek === 0 ? 0 : (startWeek * daysThisWeek) / daysFromWeek;
+
+    if (k === 'swipes') {
+      // Swipes are a whole-number weekly pool: "today" = whatever is left of this week's pool.
+      weekly = Math.round(weekly);
+      const available = weekly - (spentThisWeek.swipes - spentToday.swipes);
+      return {
+        total: totals.swipes,
+        balance,
+        weekly,
+        usedWeek: spentThisWeek.swipes,
+        daily: available,                          // what you had when today started
+        spentToday: spentToday.swipes,
+        leftToday: available - spentToday.swipes,  // same as leftWeek
+        leftWeek: weekly - spentThisWeek.swipes,
+      };
+    }
+
+    const daily = dayOff || daysLeft === 0 ? 0 : startToday / daysLeft;
     return {
       total: totals[k],
       balance,
+      weekly,
+      usedWeek: spentThisWeek[k],
       daily,
       spentToday: spentToday[k],
       leftToday: daily - spentToday[k],
-      weekly,
       leftWeek: weekly - spentThisWeek[k],
     };
   };

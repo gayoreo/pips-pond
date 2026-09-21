@@ -26,9 +26,8 @@ function numbers(mood, b) {
   const s = b.swipes;
   if (mood === 'sad') {
     if (p.total > 0 && p.leftToday < -0.004) return `${money(-p.leftToday)} over today.`;
-    if (s.total > 0 && s.daily >= 1 && s.leftToday < 0) return `${plural(-s.leftToday, 'swipe')} over today.`;
-    if (p.total > 0 && p.leftWeek < -0.004) return `${money(-p.leftWeek)} over this week.`;
-    return `${plural(-s.leftWeek, 'swipe')} over this week.`;
+    if (s.total > 0 && s.leftWeek < 0) return `${plural(-s.leftWeek, 'swipe')} over this week.`;
+    return `${money(-p.leftWeek)} over this week.`;
   }
   const bits = [];
   if (p.total > 0) bits.push(money(Math.max(0, p.leftToday)));

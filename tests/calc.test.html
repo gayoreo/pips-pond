@@ -38,24 +38,24 @@
     check('start of week for Wed Sep 2', startOfWeek('2026-09-02', 0), '2026-08-30');
 
     let b = budget(s, [], '2026-09-01');
-    check('day 1 daily swipes (1.25 → 1)', b.swipes.daily, 1);
+    check('week 1 swipe pool (4 of 8 days → 5)', b.swipes.weekly, 5);
+    check('day 1 swipes available = whole week pool', b.swipes.leftToday, 5);
     check('day 1 daily points', b.points.daily, 12.5);
-    check('week 1 weekly swipes (4 of 8 days)', b.swipes.weekly, 5);
 
     const e = [
       { type: 'swipe', amount: 2, date: '2026-09-01' },
       { type: 'points', amount: 20, date: '2026-09-01' },
     ];
-    b = budget(s, e, '2026-09-01');
-    check('over today after 2 swipes', b.swipes.leftToday, -1);
+    check('after 2 swipes today → 3 left', budget(s, e, '2026-09-01').swipes.leftToday, 3);
 
     b = budget(s, e, '2026-09-02');
-    check('day 2 recalculated swipes (8/7 → 1)', b.swipes.daily, 1);
+    check('next day swipes carry the rest of the pool (3)', b.swipes.leftToday, 3);
     check('day 2 recalculated points (80 / 7 days)', b.points.daily, 80 / 7);
 
     b = budget(s, e, '2026-09-05');
-    check('day off → no allowance', b.swipes.daily, 0);
+    check('day off → no points allowance', b.points.daily, 0);
     check('day off flag', b.dayOff, true);
+    check('day off → swipe pool still shown (3)', b.swipes.leftToday, 3);
 
     b = budget(s, [...e, { type: 'adjust-points', amount: 5, date: '2026-09-02' }], '2026-09-02');
     check('adjustment adds $5 (85 / 7)', b.points.daily, 85 / 7);
@@ -63,14 +63,20 @@
     const ex = [{ type: 'exchange', amount: 1, date: '2026-09-02' }];
     check('exchange counted this week', budget(s, ex, '2026-09-02').exchanges.used, 1);
     check('exchange does NOT use swipe', budget(s, ex, '2026-09-02').swipes.balance, 10);
-    check('exchange DOES use swipe (toggle on)', budget({ ...s, exchangeUsesSwipe: true }, ex, '2026-09-02').swipes.balance, 9);
+    const on = { ...s, exchangeUsesSwipe: true };
+    check('exchange DOES use swipe (toggle on)', budget(on, ex, '2026-09-02').swipes.balance, 9);
+    check('exchange with toggle on → 4 swipes left this week', budget(on, ex, '2026-09-02').swipes.leftToday, 4);
 
-    b = budget(s, e, '2026-09-07');
-    check('new week gets full remaining balance', b.swipes.weekly, 8);
+    check('new week gets full remaining balance', budget(s, e, '2026-09-07').swipes.weekly, 8);
+    check('whole swipes: 3.5/week → 4', budget({ ...s, swipesTotal: 7 }, [], '2026-09-01').swipes.weekly, 4);
 
-    const s7 = { ...s, swipesTotal: 7 };
-    check('whole swipes: 0.875/day → 1', budget(s7, [], '2026-09-01').swipes.daily, 1);
-    check('whole swipes: 3.5/week → 4', budget(s7, [], '2026-09-01').swipes.weekly, 4);
+    // Your example: Mon–Sun week with 3 swipes.
+    const w = { start: '2026-09-07', end: '2026-09-13', weekStart: 1, swipesTotal: 3, pointsTotal: 0, exchangeLimit: 0, daysOff: [] };
+    check('Monday shows 3 swipes', budget(w, [], '2026-09-07').swipes.leftToday, 3);
+    check('use 1 Monday → Tuesday shows 2',
+      budget(w, [{ type: 'swipe', amount: 1, date: '2026-09-07' }], '2026-09-08').swipes.leftToday, 2);
+    check('use 3 Monday → Tuesday shows 0',
+      budget(w, [{ type: 'swipe', amount: 3, date: '2026-09-07' }], '2026-09-08').swipes.leftToday, 0);
 
     check('exchanges allowed on Wednesday', budget(s, [], '2026-09-02').exchanges.allowedToday, true);
     check('exchanges NOT allowed on Saturday', budget(s, [], '2026-09-05').exchanges.allowedToday, false);

@@ -10,8 +10,7 @@ export function moodFor(b) {
   const s = b.swipes;
 
   const pointsOver = p.total > 0 && (p.leftToday < -0.004 || p.leftWeek < -0.004);
-  // Swipes are whole: with <1 swipe/day, "today" can be 0, so only the week counts then.
-  const swipesOver = s.total > 0 && (s.leftWeek < 0 || (s.daily >= 1 && s.leftToday < 0));
+  const swipesOver = s.total > 0 && s.leftWeek < 0; // swipes only care about the week
   if (pointsOver || swipesOver) return 'sad';
 
   if (p.total > 0 && p.daily > 0 && p.leftToday < p.daily * 0.25) return 'worried';

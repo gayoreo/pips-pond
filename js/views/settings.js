@@ -1,4 +1,4 @@
-import { getSettings, saveSettings, getEntries, addEntry, resetAll, getTheme, setTheme } from '../data/db.js';
+import { getSettings, saveSettings, getEntries, addEntry, resetAll, getTheme, setTheme, getProfile, saveProfile } from '../data/db.js';
 import { budget, exchangeDaysOf, DEFAULT_EXCHANGE_DAYS } from '../core/calc.js';
 import { todayKey, addDays, formatShort } from '../core/dates.js';
 import { esc, count, applyTheme } from '../ui/dom.js';
@@ -74,13 +74,24 @@ export async function renderSettings(root) {
   const exDays = exchangeDaysOf(s);
   const b = saved ? budget(saved, await getEntries(), todayKey()) : null;
   const theme = getTheme();
+  const profile = await getProfile();
 
   root.innerHTML = `
     <header>
-      ${saved ? '' : '<p class="eyebrow">Welcome to Pip’s Pond</p>'}
+      ${saved ? '' : '<p class="eyebrow">Welcome to the Pond</p>'}
       <h1 class="page-title">${saved ? 'Settings' : 'Let’s set up your pond'}</h1>
     </header>
-
+    <section class="card">
+      <h2 class="card__title">You &amp; your frog</h2>
+      <div class="grid-2">
+        <label class="field">Your nickname<input id="p-nick" maxlength="24" autocomplete="nickname" value="${esc(profile.nickname)}"></label>
+        <label class="field">Frog’s name<input id="p-frog" maxlength="24" autocomplete="off" value="${esc(profile.frogName)}"></label>
+      </div>
+      <div class="row">
+        <button type="button" class="btn-sketch" id="p-save">Save names</button>
+        <a class="btn-plain" href="#/welcome">Replay tutorial</a>
+      </div>
+    </section>
     <form id="settings-form" class="stack" novalidate>
       <section class="card">
         <h2 class="card__title">Semester</h2>
@@ -120,7 +131,7 @@ export async function renderSettings(root) {
       </section>
 
       <section class="card">
-        <h2 class="card__title">Days off (Pip naps)</h2>
+        <h2 class="card__title">Days off (naptime)</h2>
         <div class="chip-row" id="days-off-list"></div>
         <div class="grid-2">
           <label class="field">First day<input type="date" id="off-from"></label>
@@ -154,7 +165,7 @@ export async function renderSettings(root) {
     ${saved ? `
     <section class="card card--sticky">
       <h2 class="card__title">Match my card</h2>
-      <p class="card__hint">Started mid-semester, or the numbers drifted? Enter what your card shows and Pip logs an adjustment.</p>
+      <p class="card__hint">Started mid-semester, or the numbers drifted? Enter what your card shows and the app logs an adjustment.</p>
       <div class="grid-2">
         <label class="field">Swipes now<input id="match-swipes" type="number" inputmode="numeric" min="0" step="1" placeholder="${esc(count(b.swipes.balance))}"></label>
         <label class="field">Points now<input id="match-points" type="number" inputmode="decimal" min="0" step="0.01" placeholder="${esc(b.points.balance.toFixed(2))}"></label>
@@ -177,6 +188,12 @@ export async function renderSettings(root) {
 
   renderDaysOff(root);
   const form = root.querySelector('#settings-form');
+  
+  root.querySelector('#p-save').addEventListener('click', async () => {
+    const frogName = root.querySelector('#p-frog').value.trim() || 'Pip';
+    await saveProfile({ nickname: root.querySelector('#p-nick').value.trim(), frogName });
+    toast(`Hi from ${frogName}!`);
+  });
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -230,7 +247,7 @@ export async function renderSettings(root) {
       const d = Math.round((Number(ptRaw) - current.points.balance) * 100) / 100;
       if (d !== 0) { await addEntry({ type: 'adjust-points', amount: d }); changed++; }
     }
-    toast(changed ? 'Pip updated your balances.' : 'Already matches your card!');
+    toast(changed ? 'Balances updated.' : 'Already matches your card!');
     renderSettings(root);
   });
 

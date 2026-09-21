@@ -1,4 +1,4 @@
-import { getSettings, getEntries, getFavorites } from '../data/db.js';
+import { getSettings, getEntries, getFavorites, getProfile } from '../data/db.js';
 import { budget } from '../core/calc.js';
 import { todayKey, formatLong, formatShort } from '../core/dates.js';
 import { moodFor, isEating, MOOD_LABEL } from '../pip/mood.js';
@@ -13,11 +13,9 @@ function noteHTML(kind, label, p, fmt) {
   const isSwipes = kind === 'swipes';
   const over = p.leftToday < -0.004;
   const frac = p.daily > 0 ? Math.min(1, Math.max(0, p.leftToday / p.daily)) : 0;
-
   const caption = isSwipes
     ? (over ? 'over this week' : 'available today')
     : (over ? 'over today' : 'left today');
-
   const weekStat = isSwipes
     ? `<span class="stat__v">${fmt(p.usedWeek)}</span><span class="stat__s">used of ${fmt(p.weekly)}</span>`
     : `<span class="stat__v">${fmt(Math.abs(p.leftWeek))}</span><span class="stat__s">${p.leftWeek < -0.004 ? 'over' : 'left'}</span>`;
@@ -75,9 +73,9 @@ function favRowHTML(favorites) {
   </div>`;
 }
 
-function phaseHTML(b, settings) {
-  if (b.phase === 'before') return `<section class="card"><p class="hand">Semester starts ${formatShort(settings.start)}. Pip is napping until then.</p></section>`;
-  if (b.phase === 'after') return '<section class="card"><p class="hand">The semester’s over! Pip is resting.</p></section>';
+function phaseHTML(b, settings, name) {
+  if (b.phase === 'before') return `<section class="card"><p class="hand">Semester starts ${formatShort(settings.start)}. ${esc(name)} is napping until then.</p></section>`;
+  if (b.phase === 'after') return `<section class="card"><p class="hand">The semester’s over! ${esc(name)} is resting.</p></section>`;
   return '';
 }
 
@@ -85,12 +83,12 @@ export async function renderPond(root) {
   const settings = await getSettings();
   if (!settings) { location.hash = '#/settings'; return; }
 
-  const entries = await getEntries();
-  const favorites = await getFavorites();
+  const [entries, favorites, profile] = await Promise.all([getEntries(), getFavorites(), getProfile()]);
+  const name = profile.frogName;
   const today = todayKey();
   const b = budget(settings, entries, today);
   const mood = isEating() ? 'eating' : moodFor(b);
-  const line = pipLine(mood, b, entries.length + Number(today.slice(-2)));
+  const line = pipLine(mood, b, entries.length + Number(today.slice(-2)), profile.nickname);
 
   root.innerHTML = `
     <header>
@@ -98,17 +96,17 @@ export async function renderPond(root) {
       <h1 class="page-title">${formatLong(today)}</h1>
     </header>
 
-    <section aria-label="Pip">
+    <section aria-label="${esc(name)}">
       <div class="pond">
         <span class="pad pad--a"></span><span class="pad pad--b"></span>
         <span class="ripple ripple--a"></span><span class="ripple ripple--b"></span>
         <span class="mood-tag">${MOOD_LABEL[mood]}</span>
-        <div class="frog is-${mood}">${frogSVG(mood)}</div>
+        <div class="frog is-${mood}">${frogSVG(mood, name)}</div>
       </div>
       <p class="pip-says">“${esc(line)}”</p>
     </section>
 
-    ${phaseHTML(b, settings)}
+    ${phaseHTML(b, settings, name)}
 
     <div class="notes">
       ${noteHTML('swipes', 'Swipes', b.swipes, count)}
@@ -117,8 +115,8 @@ export async function renderPond(root) {
 
     ${stampsHTML(b.exchanges, b.weekResets)}
 
-    <section aria-label="Feed Pip" data-feed-area>
-      <p class="feed__title">Feed Pip:</p>
+    <section aria-label="Feed ${esc(name)}" data-feed-area>
+      <p class="feed__title">Feed ${esc(name)}:</p>
       <div class="feed-row">
         <button type="button" class="btn-sketch btn-sketch--swipe" data-feed="swipe">a swipe</button>
         <button type="button" class="btn-sketch btn-sketch--points" data-feed="points">points</button>

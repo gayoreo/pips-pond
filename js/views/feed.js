@@ -1,4 +1,4 @@
-import { addEntry, updateEntry, deleteEntry, getSettings, getEntries, getFavorites } from '../data/db.js';
+import { addEntry, updateEntry, deleteEntry, getSettings, getEntries, getFavorites, getProfile } from '../data/db.js';
 import { budget, exchangeAllowedOn } from '../core/calc.js';
 import { todayKey, formatShort, formatTime, toKey } from '../core/dates.js';
 import { startEating } from '../pip/mood.js';
@@ -12,7 +12,6 @@ const TYPES = {
   fix:      { label: 'fix',    caption: 'Points on my card now', whole: false },
 };
 
-// Human wording for any entry: "$4.75", "1 swipe", "balance fix +$2.00"
 export function describe(type, n) {
   if (type === 'points') return money(n);
   if (type === 'swipe') return plural(n, 'swipe');
@@ -24,10 +23,10 @@ export function describe(type, n) {
 
 const overLimitMsg = (limit) => `That's past your ${limit} exchanges this week. Log it anyway?`;
 
-// One-tap logging (Pond buttons + favorites). Always logs for today.
 export async function quickLog({ type, amount = 1, label } = {}) {
   const settings = await getSettings();
   if (!settings) return;
+  const { frogName } = await getProfile();
   const today = todayKey();
   const b = budget(settings, await getEntries(), today);
 
@@ -37,12 +36,13 @@ export async function quickLog({ type, amount = 1, label } = {}) {
   }
   startEating();
   await addEntry({ type, amount, date: today });
-  toast(`Pip ate ${label ?? describe(type, amount)}!`);
+  toast(`${frogName} ate ${label ?? describe(type, amount)}!`);
 }
 
 export async function openFeedSheet({ type = 'points', entry = null, date = null } = {}) {
   const settings = await getSettings();
   if (!settings) return;
+  const { frogName } = await getProfile();
 
   const editing = Boolean(entry);
   const day = entry?.date ?? date ?? todayKey();
@@ -56,6 +56,7 @@ export async function openFeedSheet({ type = 'points', entry = null, date = null
   const exchangeOk = exchangeAllowedOn(settings, day);
   const special = cents ? '00' : '.';
   const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', special, '0', 'del'];
+  const feedWord = `Feed ${frogName}`;
 
   const rawFor = (t, v) => {
     if (v == null) return '';
@@ -78,7 +79,7 @@ export async function openFeedSheet({ type = 'points', entry = null, date = null
     return '$' + (state.raw || '0');
   };
 
-  let heading = isToday ? 'Feed Pip' : `Feed Pip · ${formatShort(day)}`;
+  let heading = isToday ? feedWord : `${feedWord} · ${formatShort(day)}`;
   if (editing) {
     const sameDay = entry.createdAt && toKey(new Date(entry.createdAt)) === entry.date;
     heading = `Edit · ${formatShort(day)}${sameDay ? `, ${formatTime(entry.createdAt)}` : ''}`;
@@ -113,7 +114,7 @@ export async function openFeedSheet({ type = 'points', entry = null, date = null
         ${keys.map((k) => `<button type="button" data-key="${k}" aria-label="${k === 'del' ? 'Delete digit' : k === '.' ? 'Decimal point' : k === '00' ? 'Double zero' : k}"${k === '.' ? ' class="key-dot"' : ''}>${k}</button>`).join('')}
       </div>
       <p class="pip-note" aria-live="polite"></p>
-      <button type="button" class="btn-sketch btn-sketch--go btn-sketch--big" data-save>${editing ? 'Save changes' : 'Feed Pip'}</button>
+      <button type="button" class="btn-sketch btn-sketch--go btn-sketch--big" data-save>${editing ? 'Save changes' : esc(feedWord)}</button>
       ${editing ? '<button type="button" class="btn-plain btn-plain--danger" data-delete>delete this entry</button>' : ''}
     </div>`;
 
@@ -150,7 +151,7 @@ export async function openFeedSheet({ type = 'points', entry = null, date = null
     q('.amount__label').textContent = TYPES[state.type].caption;
     q('.amount__value').textContent = display();
     q(`[data-key="${special}"]`).disabled = TYPES[state.type].whole;
-    q('.pip-note').textContent = `Pip says: "${preview()}"`;
+    q('.pip-note').textContent = `${frogName} says: "${preview()}"`;
   }
 
   function press(key) {
@@ -209,7 +210,7 @@ export async function openFeedSheet({ type = 'points', entry = null, date = null
     }
     startEating();
     await addEntry({ type: state.type, amount: n, date: day });
-    toast(`Pip ate ${describe(state.type, n)}!`);
+    toast(`${frogName} ate ${describe(state.type, n)}!`);
   }
 
   async function remove() {

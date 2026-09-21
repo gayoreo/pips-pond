@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Make app icons</title>
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 16px; background: #FBF5E6; color: #2B2A26; }
+    #previews { display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap; }
+    figure { margin: 0; text-align: center; }
+    canvas { width: 128px; height: 128px; border-radius: 28px; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
+    button { margin-top: 16px; padding: 10px 16px; font-size: 16px; }
+  </style>
+</head>
+<body>
+  <h1>Pip's Pond icons</h1>
+  <p>Click the button, then move the 3 downloaded PNGs into <code>assets/icons/</code>.</p>
+  <div id="previews"></div>
+  <button id="dl" type="button">Download icons</button>
+
+  <script type="module">
+    import { frogSVG } from '../js/pip/frog.js';
+
+    const FILTER = '<defs><filter id="wobble" x="-10%" y="-10%" width="120%" height="120%">'
+      + '<feTurbulence type="fractalNoise" baseFrequency="0.03" numOctaves="2" seed="7" result="noise"/>'
+      + '<feDisplacementMap in="SourceGraphic" in2="noise" scale="3" xChannelSelector="R" yChannelSelector="G"/>'
+      + '</filter></defs>';
+
+    const svg = frogSVG('happy')
+      .replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" ')
+      .replace(/(<svg[^>]*>)/, `$1${FILTER}`);
+
+    const img = new Image();
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+    await img.decode();
+
+    const icons = [180, 192, 512].map((size) => {
+      const c = document.createElement('canvas');
+      c.width = c.height = size;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#CFE6D2';                 // pond green
+      ctx.fillRect(0, 0, size, size);
+      const f = size * 0.78;                     // frog size, with padding for rounded masks
+      ctx.drawImage(img, (size - f) / 2, (size - f) / 2, f, f);
+      const fig = document.createElement('figure');
+      fig.append(c, Object.assign(document.createElement('figcaption'), { textContent: `${size}×${size}` }));
+      document.getElementById('previews').append(fig);
+      return { size, c };
+    });
+
+    document.getElementById('dl').addEventListener('click', () => {
+      icons.forEach(({ size, c }, i) => {
+        setTimeout(() => c.toBlob((blob) => {
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = `icon-${size}.png`;
+          a.click();
+          setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+        }, 'image/png'), i * 400);
+      });
+    });
+  </script>
+</body>
+</html>

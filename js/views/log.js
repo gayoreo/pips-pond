@@ -55,7 +55,7 @@ function dayPageHTML(settings, all, key) {
     </div>
     ${list.length
       ? `<ul class="entries">${list.map(entryRow).join('')}</ul><p class="card__hint">${summary(list)}</p>`
-      : `<p class="card__hint">${canAdd ? 'Nothing logged this day.' : 'Pip can’t eat in the future!'}</p>`}
+      : `<p class="card__hint">${canAdd ? 'Nothing logged this day.' : 'Nobody can eat in the future!'}</p>`}
     ${canAdd ? `<button type="button" class="btn-sketch" data-add="${key}">+ add to this day</button>` : ''}
   </section>`;
 }
@@ -72,7 +72,7 @@ function calendarHTML(settings, all) {
   for (let d = 1; d <= daysInMonth(ym); d++) {
     const key = `${ym}-${String(d).padStart(2, '0')}`;
     const mood = dayMood(settings, all, key);
-    const label = `${formatLong(key)}${mood ? `, Pip was ${MOOD_LABEL[mood]}` : ''}${withEntries.has(key) ? ', has entries' : ''}`;
+    const label = `${formatLong(key)}${mood ? `, mood: ${MOOD_LABEL[mood]}` : ''}${withEntries.has(key) ? ', has entries' : ''}`;
     cells.push(`
       <button type="button" class="cal__day${key === today ? ' is-today' : ''}${key === view.selected ? ' is-selected' : ''}"
         data-day="${key}" aria-pressed="${key === view.selected}" aria-label="${label}">
@@ -168,7 +168,7 @@ export async function renderLog(root) {
     if (t.closest('#jump-add')) {
       const day = root.querySelector('#jump-day').value;
       if (!day) return toast('Pick a day first.');
-      if (day > todayKey()) return toast('Pip can’t eat in the future!');
+      if (day > todayKey()) return toast('Nobody can eat in the future!');
       return openFeedSheet({ type: 'points', date: day });
     }
   });

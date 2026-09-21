@@ -4,7 +4,8 @@ const KEY = 'pips-pond:v1';
 const THEME_KEY = 'pips-pond:theme';
 export const CHANGE_EVENT = 'pond:changed';
 
-const empty = () => ({ settings: null, entries: [], favorites: [] });
+const DEFAULT_PROFILE = { nickname: '', frogName: 'Pip', tutorialDone: false };
+const empty = () => ({ settings: null, entries: [], favorites: [], profile: { ...DEFAULT_PROFILE } });
 
 function load() {
   try {
@@ -87,6 +88,17 @@ export async function moveFavorite(id, dir) {
   const j = i + dir;
   if (i < 0 || j < 0 || j >= data.favorites.length) return;
   [data.favorites[i], data.favorites[j]] = [data.favorites[j], data.favorites[i]];
+  save(data);
+}
+
+// ---------- profile (nickname, frog name, tutorial) ----------
+export async function getProfile() {
+  return { ...DEFAULT_PROFILE, ...load().profile };
+}
+
+export async function saveProfile(patch) {
+  const data = load();
+  data.profile = { ...DEFAULT_PROFILE, ...data.profile, ...patch };
   save(data);
 }
 

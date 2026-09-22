@@ -126,45 +126,46 @@ export const deleteCourse = (id) => change((s) => {
 });
 
 // ---------- grades ----------
-// course.grading = { mode, categories: [{ id, name, weight, drop, bonus, subs?: [{ id, name, weight, drop, bonus }] }],
-//                     scale, credits, passFail, passMin, replaceLowest, examCat }
-// A category with subs is a container (name + weight only, no items of its own); a category with no
-// subs is a leaf, same as before. `examCat` and every grade item's `catId` always point at a leaf.
+// course.grading = { groups: [{ id, name, weight, mode, categories: [{ id, name, weight, drop, bonus, total }] }],
+//                    scale, credits, passFail, passMin, replaceLowest, examCat }
+//   groups are Lecture and Lab; weight = % of the overall grade. A subcategory's weight is its % of
+//   the group (weighted mode); total is its point total (points mode). examCat and every grade
+//   item's catId point at a subcategory.
 // course.grades  = [{ id, name, catId, earned, possible, status: 'graded'|'pending'|'excused', extra, isFinal, taskId }]
-// course.extras  = [{ id, kind: 'points'|'percent', amount, note }]
+// course.extras  = [{ id, kind, amount, note }]  (percentage points added to the final grade)
 const findCourse = (s, id) => s.courses.find((c) => c.id === id);
 
-// A brand-new category/sub row gets a "tmp..." placeholder id in the grade-setup sheet (see
-// course.js) so its exam-cat <option> and remove handlers have something stable to key on before
-// it's ever saved. Swap those for a real id here; remap tracks old -> new so callers (grade items'
-// catId, examCat) can follow along. Anything else (an existing saved id) is left untouched.
-const cleanCats = (list, remap) => (list ?? []).map((x) => {
-  const id = x.id && !x.id.startsWith('tmp') ? x.id : newId();
-  if (x.id && id !== x.id) remap.set(x.id, id);
-  const subs = x.subs?.length ? cleanCats(x.subs, remap) : undefined;
-  const base = { id, name: (x.name || '').trim() || 'Category', weight: x.weight, bonus: x.bonus };
-  return subs ? { ...base, subs } : { ...base, drop: x.drop };
-});
-
-const leafIds = (list) => {
-  const out = [];
-  const walk = (l) => { for (const c of l) { if (c.subs?.length) walk(c.subs); else out.push(c.id); } };
-  walk(list);
-  return out;
-};
+// New rows from the grade-setup sheet carry a placeholder id ("new-..."); swap those for a real id
+// on save, and follow the remap for examCat and any grade item's catId.
+const isTmp = (id) => !id || id.startsWith('new-') || id.startsWith('tmp');
 
 export const saveGrading = (courseId, grading) => change((s) => {
   const c = findCourse(s, courseId);
   if (!c) return;
   const remap = new Map();
-  const cats = cleanCats(grading.categories, remap);
+  const cleanCat = (x) => {
+    const id = isTmp(x.id) ? newId() : x.id;
+    if (x.id && id !== x.id) remap.set(x.id, id);
+    return { ...x, id, name: (x.name || '').trim() || 'Category' };
+  };
+  let groups;
+  if (Array.isArray(grading.groups)) {
+    groups = grading.groups.map((g) => ({ ...g, categories: (g.categories ?? []).map(cleanCat) }));
+  } else {
+    const cats = (grading.categories ?? []).map(cleanCat);
+    groups = [
+      { id: 'lecture', name: 'Lecture', weight: 100, mode: grading.mode || 'weighted', categories: cats },
+      { id: 'lab', name: 'Lab', weight: 0, mode: 'points', categories: [] },
+    ];
+  }
+  const { categories: _flat, mode: _mode, ...rest } = grading;
   const examCat = remap.get(grading.examCat) ?? grading.examCat;
-  c.grading = { ...(c.grading ?? {}), ...grading, categories: cats, examCat };
-  const ids = new Set(leafIds(cats));
-  const fallback = leafIds(cats)[0] ?? '';
+  c.grading = { ...(c.grading ?? {}), ...rest, groups, examCat };
+  const ids = new Set(groups.flatMap((g) => g.categories.map((x) => x.id)));
+  const first = groups.flatMap((g) => g.categories)[0]?.id ?? '';
   for (const it of c.grades ?? []) {
     if (remap.has(it.catId)) it.catId = remap.get(it.catId);
-    if (!ids.has(it.catId)) it.catId = fallback;
+    if (!ids.has(it.catId)) it.catId = first;
   }
   if (c.grading.examCat && !ids.has(c.grading.examCat)) c.grading.examCat = '';
 });

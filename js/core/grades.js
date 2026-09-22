@@ -1,6 +1,9 @@
-// Grade math: weighted categories or total points, drop lowest, final replaces lowest exam,
-// excused / not-graded-yet items, extra credit (points on an item, points or percent on the course,
-// or a whole extra-credit category), letter cutoffs per course, and GPA from a school-wide scale.
+// Grade math. Every course has two built-in groups, Lecture and Lab, each worth a share of the
+// overall grade. Inside a group are subcategories (the old "categories"): each group is weighted
+// or points on its own. A weighted subcategory is a % of its group; a points subcategory has a
+// typed point total that scores count toward and can go over (extra credit). Also: drop lowest,
+// final replaces lowest exam, excused / not-graded-yet items, per-item and course extra credit,
+// letter cutoffs per course, and GPA from a school-wide scale.
 
 export const SCALE_PM = [
   ['A', 93], ['A-', 90], ['B+', 87], ['B', 83], ['B-', 80], ['C+', 77], ['C', 73], ['C-', 70],
@@ -15,40 +18,69 @@ export const DEFAULT_GPA_SCALE = {
   'D+': 1.33, D: 1.0, 'D-': 0.67, F: 0,
 };
 
-export const GRADE_TEMPLATES = {
-  weighted: () => ({
-    mode: 'weighted',
-    categories: [
-      { name: 'Homework', weight: 20 }, { name: 'Quizzes', weight: 20 }, { name: 'Exams', weight: 60 },
-    ],
-  }),
-  points: () => ({ mode: 'points', categories: [{ name: 'Assignments' }, { name: 'Quizzes' }, { name: 'Exams' }] }),
-};
+// The two built-in groups, in order. Lecture carries the whole grade until you split off a Lab.
+export const GROUP_DEFS = [{ id: 'lecture', name: 'Lecture' }, { id: 'lab', name: 'Lab' }];
 
-export const DEFAULT_GRADING = {
-  mode: 'weighted', categories: [], scale: SCALE_PM, credits: 3, passFail: false, passMin: 70,
-  replaceLowest: false, examCat: '',
-};
-
-export const gradingOf = (course) => ({ ...DEFAULT_GRADING, ...(course?.grading ?? {}) });
+export const DEFAULT_GRADING = { scale: SCALE_PM, credits: 3, passFail: false, passMin: 70, replaceLowest: false, examCat: '' };
 
 const num = (v) => (v === '' || v === null || v === undefined || Number.isNaN(Number(v)) ? null : Number(v));
+
+function normGroup(raw, def, fallbackWeight) {
+  const g = raw && typeof raw === 'object' ? raw : {};
+  const w = g.weight === '' || g.weight === undefined || g.weight === null ? fallbackWeight : Number(g.weight);
+  return {
+    id: def.id,
+    name: def.name,
+    weight: Number.isNaN(w) ? fallbackWeight : w,
+    mode: g.mode === 'points' ? 'points' : 'weighted',
+    categories: Array.isArray(g.categories) ? g.categories : [],
+  };
+}
+
+// Reads a course's grading and always returns the two-group shape, migrating older single-level
+// grading (top-level mode + categories) into the Lecture group with Lab left empty.
+export function gradingOf(course) {
+  const raw = course?.grading ?? {};
+  let groups;
+  if (Array.isArray(raw.groups) && raw.groups.length) {
+    const byId = Object.fromEntries(raw.groups.map((g) => [g.id, g]));
+    groups = GROUP_DEFS.map((def, i) => normGroup(byId[def.id] ?? raw.groups[i], def, i === 0 ? 100 : 0));
+  } else {
+    groups = [
+      normGroup({ weight: 100, mode: raw.mode, categories: raw.categories }, GROUP_DEFS[0], 100),
+      normGroup({ weight: 0, mode: 'points', categories: [] }, GROUP_DEFS[1], 0),
+    ];
+  }
+  const categories = groups.flatMap((g) => g.categories); // flat list, for "is it set up" checks and lookups
+  return { ...DEFAULT_GRADING, ...raw, groups, categories };
+}
+
+// A starting point offered on a fresh course: everything in Lecture, Lab empty.
+export function starterGrading(mode) {
+  const categories = mode === 'points'
+    ? [{ name: 'Assignments', total: 100 }, { name: 'Exams', total: 300 }]
+    : [{ name: 'Homework', weight: 20 }, { name: 'Quizzes', weight: 20 }, { name: 'Exams', weight: 60 }];
+  return {
+    groups: [
+      { id: 'lecture', name: 'Lecture', weight: 100, mode, categories },
+      { id: 'lab', name: 'Lab', weight: 0, mode: 'points', categories: [] },
+    ],
+  };
+}
+
 const isGraded = (it) => it.status !== 'excused' && it.status !== 'pending' && num(it.earned) !== null && num(it.possible) > 0;
 const pctOf = (e, p) => (p > 0 ? e / p : 0);
 
-// Works out one leaf category: returns { earned, possible, pct (0-1) or null, dropped: [ids] }.
-function leafResult(cat, items, replacement) {
+// One subcategory from its items: { earned, possible, pct (0-1) or null, dropped: [ids] }.
+// earned/possible are summed from the items; the typed point total (for points groups) is applied later.
+function categoryResult(cat, items, replacement) {
   let list = items.filter(isGraded).map((it) => ({ id: it.id, earned: num(it.earned) + (num(it.extra) ?? 0), possible: num(it.possible), isFinal: Boolean(it.isFinal) }));
 
-  // Final replaces the lowest exam in this category if it's higher.
   if (replacement && replacement.catId === cat.id) {
     const others = list.filter((x) => !x.isFinal);
     if (others.length) {
       const lowest = others.reduce((a, b) => (pctOf(a.earned, a.possible) <= pctOf(b.earned, b.possible) ? a : b));
-      if (replacement.pct > pctOf(lowest.earned, lowest.possible)) {
-        lowest.earned = replacement.pct * lowest.possible;
-        lowest.replaced = true;
-      }
+      if (replacement.pct > pctOf(lowest.earned, lowest.possible)) lowest.earned = replacement.pct * lowest.possible;
     }
   }
 
@@ -64,42 +96,8 @@ function leafResult(cat, items, replacement) {
   return { earned, possible, pct: possible > 0 ? earned / possible : null, dropped };
 }
 
-// Combines a set of sub-results into their parent's own { earned, possible, pct }.
-// Weighted: subs are weighted against each other (like top-level categories). Points: raw points add up.
-function combineSubs(mode, subs, results) {
-  const regular = subs.filter((c) => !c.bonus);
-  const bonus = subs.filter((c) => c.bonus);
-  if (mode === 'points') {
-    const earned = regular.reduce((s, c) => s + results[c.id].earned, 0) + bonus.reduce((s, c) => s + results[c.id].earned, 0);
-    const possible = regular.reduce((s, c) => s + results[c.id].possible, 0);
-    return { earned, possible, pct: possible > 0 ? earned / possible : null, dropped: [] };
-  }
-  const counted = regular.filter((c) => results[c.id].pct !== null && (num(c.weight) ?? 0) > 0);
-  const W = counted.reduce((s, c) => s + num(c.weight), 0);
-  if (!W) return { earned: 0, possible: 0, pct: null, dropped: [] };
-  let pct = counted.reduce((s, c) => s + num(c.weight) * results[c.id].pct, 0) / W;
-  pct += bonus.reduce((s, c) => s + (num(c.weight) ?? 0) * (results[c.id].pct ?? 0), 0) / W;
-  return { earned: 0, possible: 0, pct, dropped: [] };
-}
-
-// One category, leaf or with subs. `byCat(id)` looks up items for a leaf id. `into` collects every
-// leaf/sub result too, keyed by id, so the UI can show a subcategory's own progress.
-function catResult(cat, mode, byCat, replacement, into) {
-  const subs = cat.subs ?? [];
-  if (!subs.length) {
-    const r = leafResult(cat, byCat(cat.id), replacement);
-    into[cat.id] = r;
-    return r;
-  }
-  const subResults = {};
-  for (const sc of subs) subResults[sc.id] = catResult(sc, mode, byCat, replacement, into);
-  const r = { ...combineSubs(mode, subs, subResults), subs: subs.map((sc) => sc.id) };
-  into[cat.id] = r;
-  return r;
-}
-
 // The whole course. `override` = { itemId: earned } to try a score without saving it.
-// Returns { pct (0-100+) or null, letter, cats: { catId: result } (every category and subcategory), points }
+// Returns { pct (0-100+) or null, letter, cats: { catId: result }, groups: [{ id, name, weight, mode, pct, cats:[{cat,result,pct}] }] }
 export function courseGrade(course, override = {}) {
   const g = gradingOf(course);
   const items = (course.grades ?? []).map((it) => (it.id in override ? { ...it, earned: override[it.id], status: 'graded' } : it));
@@ -112,38 +110,52 @@ export function courseGrade(course, override = {}) {
   }
 
   const cats = {};
-  for (const c of g.categories) catResult(c, g.mode, byCat, replacement, cats);
-  const regular = g.categories.filter((c) => !c.bonus);
-  const bonus = g.categories.filter((c) => c.bonus);
-  const extras = course.extras ?? [];
-  const extraPoints = extras.filter((x) => x.kind === 'points').reduce((s, x) => s + (num(x.amount) ?? 0), 0);
-  const extraPercent = extras.filter((x) => x.kind === 'percent').reduce((s, x) => s + (num(x.amount) ?? 0), 0);
+  for (const gr of g.groups) for (const c of gr.categories) cats[c.id] = categoryResult(c, byCat(c.id), replacement);
 
-  let pct = null;
-  if (g.mode === 'points') {
-    const E = regular.reduce((s, c) => s + cats[c.id].earned, 0);
-    const P = regular.reduce((s, c) => s + cats[c.id].possible, 0);
-    const B = bonus.reduce((s, c) => s + cats[c.id].earned, 0);
-    if (P > 0) pct = ((E + B + extraPoints) / P) * 100 + extraPercent;
-  } else {
+  // A subcategory's own percent, for display. Points subcats divide by their typed total, so
+  // extra credit can push them past 100%.
+  const catPctOf = (gr, c) => {
+    const r = cats[c.id];
+    if (gr.mode === 'points') { const t = num(c.total); return t ? (r.earned / t) * 100 : (r.possible > 0 ? r.pct * 100 : null); }
+    return r.pct === null ? null : r.pct * 100;
+  };
+
+  // A group's percent (0-100+), or null if nothing in it is graded yet.
+  const groupPct = (gr) => {
+    const regular = gr.categories.filter((c) => !c.bonus);
+    const bonus = gr.categories.filter((c) => c.bonus);
+    if (gr.mode === 'points') {
+      const P = regular.reduce((s, c) => s + (num(c.total) ?? 0), 0);
+      const E = regular.reduce((s, c) => s + cats[c.id].earned, 0);
+      const B = bonus.reduce((s, c) => s + cats[c.id].earned, 0);
+      const anyGraded = [...regular, ...bonus].some((c) => cats[c.id].possible > 0);
+      return P > 0 && anyGraded ? ((E + B) / P) * 100 : null;
+    }
     const counted = regular.filter((c) => cats[c.id].pct !== null && (num(c.weight) ?? 0) > 0);
     const W = counted.reduce((s, c) => s + num(c.weight), 0);
-    if (W > 0) {
-      pct = (counted.reduce((s, c) => s + num(c.weight) * cats[c.id].pct, 0) / W) * 100;
-      pct += bonus.reduce((s, c) => s + (num(c.weight) ?? 0) * (cats[c.id].pct ?? 0), 0);
-      pct += extraPoints + extraPercent; // on a weighted course, extra points count as percentage points
-    }
+    if (!W) return null;
+    let pct = (counted.reduce((s, c) => s + num(c.weight) * cats[c.id].pct, 0) / W) * 100;
+    pct += bonus.reduce((s, c) => s + (num(c.weight) ?? 0) * (cats[c.id].pct ?? 0), 0);
+    return pct;
+  };
+
+  const groups = g.groups.map((gr) => ({
+    id: gr.id, name: gr.name, weight: num(gr.weight) ?? 0, mode: gr.mode,
+    pct: groupPct(gr),
+    cats: gr.categories.map((c) => ({ cat: c, result: cats[c.id], pct: catPctOf(gr, c) })),
+  }));
+
+  let pct = null;
+  const counted = groups.filter((x) => x.pct !== null && x.weight > 0);
+  const W = counted.reduce((s, x) => s + x.weight, 0);
+  if (W > 0) {
+    pct = counted.reduce((s, x) => s + x.weight * x.pct, 0) / W;
+    // Course-wide extra credit lands as percentage points on the final grade.
+    const extras = course.extras ?? [];
+    pct += extras.reduce((s, x) => s + (num(x.amount) ?? 0), 0);
   }
   if (pct !== null) pct = Math.round(pct * 100) / 100;
-  return { pct, letter: letterFor(pct, g), cats };
-}
-
-// Leaf categories only, in tree order — where items can actually attach, drop-lowest applies, and exams live.
-export function leafCategories(g) {
-  const out = [];
-  const walk = (list) => { for (const c of list) { if (c.subs?.length) walk(c.subs); else out.push(c); } };
-  walk(g.categories ?? []);
-  return out;
+  return { pct, letter: letterFor(pct, g), cats, groups };
 }
 
 export function letterFor(pct, g) {
@@ -153,8 +165,7 @@ export function letterFor(pct, g) {
   return (scale.find((s) => pct >= s.min) ?? scale[scale.length - 1]).letter;
 }
 
-// Score needed on one not-yet-graded item to reach `target` percent. Returns
-// { need: percent on that item } or { already: true } or { impossible: true, need }.
+// Score needed on one not-yet-graded item to reach `target` percent.
 export function scoreNeeded(course, itemId, target) {
   const it = (course.grades ?? []).find((x) => x.id === itemId);
   const possible = num(it?.possible);

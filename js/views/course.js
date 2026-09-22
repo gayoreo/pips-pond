@@ -6,7 +6,7 @@ import {
 } from '../data/study.js';
 import { getDecks, dueCards } from '../data/decks.js';
 import {
-  courseGrade, gradingOf, scoreNeeded, letterFor, fmtPct, GRADE_TEMPLATES, SCALE_PM, SCALE_PLAIN, leafCategories,
+  courseGrade, gradingOf, scoreNeeded, letterFor, fmtPct, starterGrading, SCALE_PM, SCALE_PLAIN,
 } from '../core/grades.js';
 import { todayKey } from '../core/dates.js';
 import { esc } from '../ui/dom.js';
@@ -41,19 +41,17 @@ const scoreText = (it) => {
 const itemPct = (it) => (it.status === 'graded' && num(it.earned) !== null && num(it.possible) > 0
   ? fmtPct(Math.round(((num(it.earned) + (num(it.extra) ?? 0)) / num(it.possible)) * 1000) / 10) : '');
 
-// Best guess at which category a finished task's score belongs in. Always a leaf id.
+// Best guess at which category a finished task's score belongs in.
 export function guessCategory(course, task) {
-  const cats = leafCategories(gradingOf(course)).filter((c) => !c.bonus);
+  const cats = gradingOf(course).categories.filter((c) => !c.bonus);
   const text = `${task?.title ?? ''} ${task?.type ?? ''}`;
   const tests = [
     [/quiz/i, /quiz/i], [/final|midterm|exam|test/i, /exam|test|midterm/i], [/lab/i, /lab/i],
     [/project/i, /project/i], [/paper|essay|writing/i, /paper|essay|writing/i],
     [/homework|hw|problem|pset/i, /home ?work|hw|problem|assign/i], [/assign/i, /assign|home ?work/i],
   ];
-  // First rule whose task-pattern matches wins the word (e.g. "quiz" beats "test" in "Quiz Test").
-  // If that rule can't find a matching category, stop there instead of falling through to a
-  // later, unrelated rule (like exams) or defaulting to categories[0] — a quiz with nowhere to
-  // go should land in a neutral spot, never silently get filed as an exam.
+  // First rule whose task-pattern matches decides. If its category doesn't exist, fall to a
+  // neutral category rather than an exam one, so a quiz with nowhere to go isn't filed as an exam.
   for (const [inTask, inCat] of tests) {
     if (!inTask.test(text)) continue;
     const hit = cats.find((c) => inCat.test(c.name));
@@ -77,20 +75,24 @@ export async function renderCourse(root) {
   const pending = items.filter((it) => (it.status === 'pending' || num(it.earned) === null) && it.status !== 'excused' && num(it.possible) > 0);
   const scale = [...(g.scale?.length ? g.scale : SCALE_PM)].sort((a, b) => b.min - a.min);
 
-  // A leaf's own header + items list + "add a score". `headingTag` lets the same body work as
-  // either the card's main heading (h2, standalone leaf) or a nested sub-heading (h3, inside a group).
-  const leafBody = (c, headingTag, extraTag) => {
-    const r = result.cats[c.id] ?? { pct: null, dropped: [] };
+  const catPct = (p) => (p === null || p === undefined ? '--' : fmtPct(Math.round(p * 10) / 10));
+
+  const catCard = (gr, ci) => {
+    const c = ci.cat;
+    const r = ci.result ?? { dropped: [] };
     const list = items.filter((it) => it.catId === c.id);
     const tags = [
-      extraTag || '',
+      gr.mode === 'weighted' && !c.bonus ? `${num(c.weight) ?? 0}% of ${gr.name.toLowerCase()}` : '',
+      gr.mode === 'points' && !c.bonus ? `${num(c.total) ?? 0} pts` : '',
+      c.bonus ? 'extra credit' : '',
       num(c.drop) ? `drops lowest ${num(c.drop)}` : '',
       g.replaceLowest && g.examCat === c.id ? 'final replaces lowest' : '',
     ].filter(Boolean).join(' · ');
     return `
+    <section class="card grade-cat">
       <div class="grade-cat__head">
-        <${headingTag} class="${headingTag === 'h2' ? 'card__title' : 'grade-cat__sub-title'}">${esc(c.name)} ${tags ? `<span class="muted">${tags}</span>` : ''}</${headingTag}>
-        <span class="grade-cat__pct">${r.pct === null ? '--' : fmtPct(Math.round(r.pct * 1000) / 10)}</span>
+        <h2 class="card__title">${esc(c.name)} ${tags ? `<span class="muted">${tags}</span>` : ''}</h2>
+        <span class="grade-cat__pct">${catPct(ci.pct)}</span>
       </div>
       ${list.length ? `<ul class="grade-items">${list.map((it) => `
         <li><button type="button" data-item="${esc(it.id)}" class="${it.status === 'excused' ? 'is-excused' : ''}${r.dropped.includes(it.id) ? ' is-dropped' : ''}">
@@ -98,24 +100,19 @@ export async function renderCourse(root) {
           <span class="grade-items__score">${esc(scoreText(it))}</span>
           <span class="grade-items__pct">${itemPct(it)}</span>
         </button></li>`).join('')}</ul>` : '<p class="card__hint">Nothing here yet.</p>'}
-      <button type="button" class="btn-plain" data-add-item="${esc(c.id)}">+ add a score</button>`;
-  };
-
-  const catCard = (c) => {
-    const subs = c.subs ?? [];
-    const r = result.cats[c.id] ?? { pct: null };
-    const weightTag = g.mode === 'weighted' && !c.bonus ? `${num(c.weight) ?? 0}%` : '';
-    const tag = [weightTag, c.bonus ? 'extra credit' : ''].filter(Boolean).join(' · ');
-    if (!subs.length) return `<section class="card grade-cat">${leafBody(c, 'h2', tag)}</section>`;
-    return `
-    <section class="card grade-cat grade-cat--group">
-      <div class="grade-cat__head">
-        <h2 class="card__title">${esc(c.name)} ${tag ? `<span class="muted">${tag}</span>` : ''}</h2>
-        <span class="grade-cat__pct">${r.pct === null ? '--' : fmtPct(Math.round(r.pct * 1000) / 10)}</span>
-      </div>
-      ${subs.map((sc) => `<div class="grade-cat__nested">${leafBody(sc, 'h3', g.mode === 'weighted' && !sc.bonus ? `${num(sc.weight) ?? 0}% of ${esc(c.name)}` : (sc.bonus ? 'extra credit' : ''))}</div>`).join('')}
+      <button type="button" class="btn-plain" data-add-item="${esc(c.id)}">+ add a score</button>
     </section>`;
   };
+
+  // A group (Lecture or Lab): its share of the grade, its running percent, and its subcategories.
+  const groupSection = (gr) => `
+    <div class="grade-group">
+      <div class="grade-group__head">
+        <h2 class="grade-group__name">${esc(gr.name)} <span class="muted">${gr.weight}% of grade · ${gr.mode === 'points' ? 'points' : 'weighted'}</span></h2>
+        <span class="grade-group__pct">${catPct(gr.pct)}</span>
+      </div>
+      ${gr.cats.length ? gr.cats.map((ci) => catCard(gr, ci)).join('') : `<p class="card__hint">Nothing in ${esc(gr.name)} yet. Add a category in grade setup.</p>`}
+    </div>`;
 
   let need = '';
   if (pending.length && !g.passFail) {
@@ -151,7 +148,7 @@ export async function renderCourse(root) {
     <section class="card grade-hero">
       <div>
         <p class="grade-hero__pct">${fmtPct(result.pct)}</p>
-        <p class="muted">${course.code ? `${esc(course.code)} · ` : ''}${g.passFail ? 'pass/fail' : `${num(g.credits) ?? 0} ${num(g.credits) === 1 ? 'credit' : 'credits'}`}${g.mode === 'points' ? ' · total points' : ' · weighted'}</p>
+        <p class="muted">${course.code ? `${esc(course.code)} · ` : ''}${g.passFail ? 'pass/fail' : `${num(g.credits) ?? 0} ${num(g.credits) === 1 ? 'credit' : 'credits'}`}</p>
       </div>
       <p class="grade-hero__letter">${esc(result.letter || '--')}</p>
     </section>
@@ -171,7 +168,7 @@ export async function renderCourse(root) {
 
     ${g.categories.length ? `
       ${need}
-      ${g.categories.map(catCard).join('')}
+      ${result.groups.filter((gr) => gr.weight > 0 || gr.cats.length).map(groupSection).join('')}
       <section class="card">
         <h2 class="card__title">Extra credit on the course</h2>
         ${(course.extras ?? []).length ? `<ul class="grade-items">${course.extras.map((x) => `
@@ -216,9 +213,9 @@ export async function renderCourse(root) {
     if (t.closest('[data-grading]')) return openGradingSheet(course);
     const tpl = t.closest('[data-template]');
     if (tpl) {
-      saveGrading(course.id, { ...GRADE_TEMPLATES[tpl.dataset.template](), scale: g.scale });
+      saveGrading(course.id, { ...starterGrading(tpl.dataset.template), scale: g.scale });
       play('pop');
-      return toast('Set up. Tap “grade setup” to change names and weights.');
+      return toast('Set up. Tap “grade setup” to add a Lab or change weights.');
     }
     const add = t.closest('[data-add-item]');
     if (add) return openItemSheet(course, { catId: add.dataset.addItem });
@@ -243,7 +240,7 @@ export async function renderCourse(root) {
 export function scoreTask(course, task) {
   if (!task) return;
   if (!gradingOf(course).categories.length) {
-    saveGrading(course.id, { ...GRADE_TEMPLATES.weighted(), scale: gradingOf(course).scale });
+    saveGrading(course.id, { ...starterGrading('weighted'), scale: gradingOf(course).scale });
     toast('Gave this course a starting grade setup. Change it any time in “grade setup”.', 3500);
   }
   const fresh = getStudy().courses.find((c) => c.id === course.id) ?? course;
@@ -253,23 +250,14 @@ export function scoreTask(course, task) {
   });
 }
 
-// Every leaf as { id, name, label } — label is "Parent · Sub" for nested leaves, else just the name.
-const leafOptions = (g) => {
-  const out = [];
-  const walk = (list, parent) => { for (const c of list) (c.subs?.length ? walk(c.subs, c.name) : out.push({ id: c.id, name: c.name, label: parent ? `${parent} · ${c.name}` : c.name })); };
-  walk(g.categories ?? [], '');
-  return out;
-};
-
 // ---------- add / edit a score ----------
 export function openItemSheet(course, item) {
   const g = gradingOf(course);
   const editing = Boolean(item?.id);
-  const leaves = leafOptions(g);
-  const it = { name: '', catId: leaves[0]?.id ?? '', earned: '', possible: 100, status: 'graded', extra: '', isFinal: false, ...(item ?? {}) };
+  const it = { name: '', catId: g.categories[0]?.id ?? '', earned: '', possible: 100, status: 'graded', extra: '', isFinal: false, ...(item ?? {}) };
   const html = `
     <label class="field">Name<input name="name" maxlength="60" autocomplete="off" value="${esc(it.name)}" placeholder="Quiz 3"></label>
-    <label class="field">Category<select name="cat">${leaves.map((c) => `<option value="${esc(c.id)}"${c.id === it.catId ? ' selected' : ''}>${esc(c.label)}</option>`).join('')}</select></label>
+    <label class="field">Category<select name="cat">${g.groups.filter((gr) => gr.categories.length).map((gr) => `<optgroup label="${esc(gr.name)}">${gr.categories.map((c) => `<option value="${esc(c.id)}"${c.id === it.catId ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}</optgroup>`).join('')}</select></label>
     <div class="seg seg--3" role="group" aria-label="Status">
       ${[['graded', 'Graded'], ['pending', 'Not graded yet'], ['excused', 'Excused']].map(([k, label]) => `<button type="button" data-status="${k}" aria-pressed="${it.status === k}">${label}</button>`).join('')}
     </div>
@@ -357,55 +345,64 @@ function openExtraSheet(course, extra) {
 }
 
 // ---------- grade setup ----------
-// Local temp ids (separate from newId()) so a brand-new category/sub has a stable value for its
-// exam-cat <option> and remove/edit handlers before it's ever saved.
-let tmpSeq = 0;
-const tmpId = () => `tmp${tmpSeq += 1}`;
+const tmpId = () => `new-${Math.random().toString(36).slice(2, 9)}`;
 
 function openGradingSheet(course) {
   const g = gradingOf(course);
-  const cloneCat = (c) => ({ ...c, id: c.id || tmpId(), subs: c.subs?.length ? c.subs.map(cloneCat) : undefined });
   const d = {
-    mode: g.mode,
-    categories: g.categories.map(cloneCat),
+    groups: g.groups.map((gr) => ({
+      id: gr.id, name: gr.name, weight: gr.weight, mode: gr.mode,
+      categories: gr.categories.map((c) => ({ ...c, id: c.id || tmpId() })),
+    })),
     scale: (g.scale?.length ? g.scale : SCALE_PM).map((x) => ({ ...x })),
+    examCat: g.examCat || '',
   };
+  const allCats = () => d.groups.flatMap((gr) => gr.categories);
 
-  // Every leaf (top-level categories with no subs, and every sub), in tree order, for the exam-cat picker.
-  const leaves = () => {
-    const out = [];
-    const walk = (list, parent) => { for (const c of list) (c.subs?.length ? walk(c.subs, c.name) : out.push({ ...c, label: parent ? `${parent} · ${c.name}` : c.name })); };
-    walk(d.categories, '');
-    return out;
-  };
-
-  const subRow = (c, i, si) => `
-    <div class="grade-row grade-row--sub" data-cat="${i}" data-sub="${si}">
-      <input data-c="name" maxlength="40" value="${esc(c.name)}" aria-label="Subcategory name">
-      <input data-c="weight" inputmode="decimal" value="${esc(String(c.weight ?? ''))}" aria-label="Weight percent of parent" placeholder="%" ${d.mode === 'weighted' ? '' : 'hidden'}>
-      <input data-c="drop" inputmode="numeric" value="${esc(String(c.drop ?? ''))}" aria-label="Drop lowest" placeholder="drop">
-      <label class="grade-row__bonus"><input type="checkbox" data-c="bonus"${c.bonus ? ' checked' : ''}> extra</label>
-      <button type="button" class="btn-plain btn-plain--danger" data-rm-sub aria-label="Remove ${esc(c.name)}">✕</button>
-    </div>`;
-
-  const catRows = () => d.categories.map((c, i) => {
-    const subs = c.subs ?? [];
+  const catRow = (gi, ci, gr) => {
+    const c = gr.categories[ci];
+    const valueField = gr.mode === 'points'
+      ? `<input data-c="total" inputmode="decimal" value="${esc(String(c.total ?? ''))}" placeholder="pts" aria-label="Point total">`
+      : `<input data-c="weight" inputmode="decimal" value="${esc(String(c.weight ?? ''))}" placeholder="%" aria-label="Percent of ${esc(gr.name)}">`;
     return `
-    <div class="grade-row-group" data-catgroup="${i}">
-      <div class="grade-row" data-cat="${i}">
-        <input data-c="name" maxlength="40" value="${esc(c.name)}" aria-label="Category name">
-        <input data-c="weight" inputmode="decimal" value="${esc(String(c.weight ?? ''))}" aria-label="Weight percent" placeholder="%" ${d.mode === 'weighted' ? '' : 'hidden'}>
-        <input data-c="drop" inputmode="numeric" value="${esc(String(c.drop ?? ''))}" aria-label="Drop lowest" placeholder="drop" ${subs.length ? 'hidden' : ''}>
-        <label class="grade-row__bonus"${subs.length ? ' hidden' : ''}><input type="checkbox" data-c="bonus"${c.bonus ? ' checked' : ''}> extra</label>
-        <button type="button" class="btn-plain btn-plain--danger" data-rm-cat="${i}" aria-label="Remove ${esc(c.name)}">✕</button>
-      </div>
-      ${subs.length ? `
-        <p class="card__hint grade-row__sub-hint">Subcategory weights are a share of ${esc(c.name || 'this category')}, not the whole course.</p>
-        <div class="stack grade-row__subs">${subs.map((sc, si) => subRow(sc, i, si)).join('')}</div>` : ''}
-      <button type="button" class="btn-plain btn-plain--small" data-add-sub="${i}">+ add a subcategory (e.g. lab, lecture)</button>
+    <div class="grade-row" data-g="${gi}" data-cat="${ci}">
+      <input data-c="name" maxlength="40" value="${esc(c.name)}" aria-label="Category name">
+      ${valueField}
+      <input data-c="drop" inputmode="numeric" value="${esc(String(c.drop ?? ''))}" placeholder="drop" aria-label="Drop lowest">
+      <label class="grade-row__bonus"><input type="checkbox" data-c="bonus"${c.bonus ? ' checked' : ''}> extra</label>
+      <button type="button" class="btn-plain btn-plain--danger" data-rm-cat="${gi}:${ci}" aria-label="Remove ${esc(c.name)}">✕</button>
     </div>`;
-  }).join('');
-
+  };
+  const groupNote = (gr) => {
+    if (gr.mode === 'points') {
+      const total = gr.categories.filter((c) => !c.bonus).reduce((s, c) => s + (Number(c.total) || 0), 0);
+      return total ? `${gr.name} totals ${total} points.` : `Give each category a point total.`;
+    }
+    const sum = gr.categories.filter((c) => !c.bonus).reduce((s, c) => s + (Number(c.weight) || 0), 0);
+    return sum === 100 ? `Categories add up to 100% of ${gr.name}.` : `Categories add up to ${sum}% of ${gr.name}. They usually total 100%.`;
+  };
+  const groupCard = (gi) => {
+    const gr = d.groups[gi];
+    return `
+    <section class="card grade-groupset">
+      <div class="grade-group__head">
+        <h2 class="card__title">${esc(gr.name)}</h2>
+        <label class="grade-gweight">% of grade<input data-gweight="${gi}" inputmode="decimal" value="${esc(String(gr.weight ?? ''))}"></label>
+      </div>
+      <div class="seg seg--2" role="group" aria-label="${esc(gr.name)} grading">
+        <button type="button" data-gmode="${gi}" data-mode="weighted" aria-pressed="${gr.mode !== 'points'}">Weighted</button>
+        <button type="button" data-gmode="${gi}" data-mode="points" aria-pressed="${gr.mode === 'points'}">Points</button>
+      </div>
+      <div class="stack" data-cats="${gi}">${gr.categories.map((_, ci) => catRow(gi, ci, gr)).join('')}</div>
+      <p class="card__hint" data-gnote="${gi}">${gr.categories.length ? groupNote(gr) : `No categories yet.`}</p>
+      <button type="button" class="btn-plain" data-add-cat="${gi}">+ add a category to ${esc(gr.name)}</button>
+    </section>`;
+  };
+  const groupsNote = () => {
+    const sum = d.groups.reduce((s, gr) => s + (Number(gr.weight) || 0), 0);
+    return sum === 100 ? 'Lecture and Lab add up to 100%.' : `Lecture and Lab add up to ${sum}%. They should total 100% (a lecture-only class is Lecture 100, Lab 0).`;
+  };
+  const examOptions = () => allCats().map((c) => `<option value="${esc(c.id)}"${c.id === d.examCat ? ' selected' : ''}>${esc(c.name)}</option>`).join('');
   const scaleRows = () => d.scale.map((x, i) => `
     <div class="grade-row grade-row--scale" data-scale="${i}">
       <input data-s="letter" maxlength="3" value="${esc(x.letter)}" aria-label="Letter">
@@ -415,30 +412,13 @@ function openGradingSheet(course) {
       <button type="button" class="btn-plain btn-plain--danger" data-rm-scale="${i}" aria-label="Remove ${esc(x.letter)}">✕</button>
     </div>`).join('');
 
-  const weightNote = () => {
-    if (d.mode !== 'weighted') return '';
-    const sum = d.categories.filter((c) => !c.bonus).reduce((s, c) => s + (Number(c.weight) || 0), 0);
-    const subNotes = d.categories.filter((c) => c.subs?.length).map((c) => {
-      const subSum = c.subs.filter((sc) => !sc.bonus).reduce((s, sc) => s + (Number(sc.weight) || 0), 0);
-      return subSum === 100 ? '' : `${c.name || 'A category'}'s subcategories add up to ${subSum}%, not 100%.`;
-    }).filter(Boolean);
-    const top = sum === 100 ? 'Weights add up to 100%.' : `Weights add up to ${sum}%. They usually total 100%.`;
-    return [top, ...subNotes].join(' ');
-  };
-
   const html = `
-    <div class="seg seg--2" role="group" aria-label="Grading">
-      <button type="button" data-mode="weighted" aria-pressed="${d.mode === 'weighted'}">Weighted</button>
-      <button type="button" data-mode="points" aria-pressed="${d.mode === 'points'}">Total points</button>
-    </div>
-    <p class="field">Categories</p>
-    <p class="card__hint">Name${d.mode === 'weighted' ? ', weight %' : ''}, how many lowest scores to drop, and whether it's an extra credit category. Give a category subcategories (like Lab and Lecture, each split further) instead of scores directly, if you need that level.</p>
-    <div class="stack" data-cats>${catRows()}</div>
-    <p class="card__hint" data-weight-note>${weightNote()}</p>
-    <button type="button" class="btn-plain" data-add-cat>+ add a category</button>
+    <p class="card__hint">Split the grade between Lecture and Lab (a class with no lab is just Lecture 100%). Each group is weighted or points, and its categories are a share of that group.</p>
+    <div class="stack" data-groups>${d.groups.map((_, gi) => groupCard(gi)).join('')}</div>
+    <p class="card__hint" data-groups-note>${groupsNote()}</p>
 
     <label class="row"><span>Final exam replaces the lowest exam</span><input type="checkbox" class="switch" name="replaceLowest"${g.replaceLowest ? ' checked' : ''}></label>
-    <label class="field" data-exam-cat${g.replaceLowest ? '' : ' hidden'}>Exams are in<select name="examCat">${leaves().map((c) => `<option value="${esc(c.id)}"${c.id === g.examCat ? ' selected' : ''}>${esc(c.label)}</option>`).join('')}</select></label>
+    <label class="field" data-exam-cat${g.replaceLowest ? '' : ' hidden'}>Exams are in<select name="examCat"><option value="">—</option>${examOptions()}</select></label>
 
     <div class="grid-2">
       <label class="field">Credits<input name="credits" inputmode="decimal" value="${esc(String(g.credits ?? 3))}"></label>
@@ -459,22 +439,20 @@ function openGradingSheet(course) {
   openSheet('Grade setup', html, (sheet, close) => {
     const q = (sel) => sheet.querySelector(sel);
     const readRows = () => {
-      sheet.querySelectorAll('[data-catgroup]').forEach((group) => {
-        const c = d.categories[Number(group.dataset.catgroup)];
-        const row = group.querySelector(':scope > [data-cat]');
+      sheet.querySelectorAll('[data-gweight]').forEach((el) => {
+        const gr = d.groups[Number(el.dataset.gweight)];
+        gr.weight = el.value === '' ? '' : Number(el.value);
+      });
+      sheet.querySelectorAll('[data-cat]').forEach((row) => {
+        const gr = d.groups[Number(row.dataset.g)];
+        const c = gr.categories[Number(row.dataset.cat)];
         c.name = row.querySelector('[data-c="name"]').value;
-        c.weight = row.querySelector('[data-c="weight"]').value === '' ? '' : Number(row.querySelector('[data-c="weight"]').value);
-        if (!c.subs?.length) {
-          c.drop = row.querySelector('[data-c="drop"]').value === '' ? '' : Number(row.querySelector('[data-c="drop"]').value);
-          c.bonus = row.querySelector('[data-c="bonus"]').checked;
-        }
-        group.querySelectorAll('[data-sub]').forEach((srow) => {
-          const sc = c.subs[Number(srow.dataset.sub)];
-          sc.name = srow.querySelector('[data-c="name"]').value;
-          sc.weight = srow.querySelector('[data-c="weight"]').value === '' ? '' : Number(srow.querySelector('[data-c="weight"]').value);
-          sc.drop = srow.querySelector('[data-c="drop"]').value === '' ? '' : Number(srow.querySelector('[data-c="drop"]').value);
-          sc.bonus = srow.querySelector('[data-c="bonus"]').checked;
-        });
+        const wEl = row.querySelector('[data-c="weight"]');
+        const tEl = row.querySelector('[data-c="total"]');
+        if (wEl) c.weight = wEl.value === '' ? '' : Number(wEl.value);
+        if (tEl) c.total = tEl.value === '' ? '' : Number(tEl.value);
+        c.drop = row.querySelector('[data-c="drop"]').value === '' ? '' : Number(row.querySelector('[data-c="drop"]').value);
+        c.bonus = row.querySelector('[data-c="bonus"]').checked;
       });
       sheet.querySelectorAll('[data-scale]').forEach((row) => {
         const x = d.scale[Number(row.dataset.scale)];
@@ -482,90 +460,64 @@ function openGradingSheet(course) {
         x.min = Number(row.querySelector('[data-s="min"]').value);
       });
     };
-    const redraw = () => {
-      const examVal = q('[name="examCat"]')?.value;
-      q('[data-cats]').innerHTML = catRows();
-      q('[data-scale-rows]').innerHTML = scaleRows();
-      q('[data-weight-note]').textContent = weightNote();
-      const examSel = q('[name="examCat"]');
-      if (examSel) {
-        examSel.innerHTML = leaves().map((c) => `<option value="${esc(c.id)}"${c.id === examVal ? ' selected' : ''}>${esc(c.label)}</option>`).join('');
-      }
+    const redrawGroups = () => {
+      q('[data-groups]').innerHTML = d.groups.map((_, gi) => groupCard(gi)).join('');
+      q('[data-groups-note]').textContent = groupsNote();
+      if (q('[name="examCat"]')) q('[name="examCat"]').innerHTML = `<option value="">—</option>${examOptions()}`;
     };
-    sheet.addEventListener('input', () => { readRows(); q('[data-weight-note]').textContent = weightNote(); });
+    const redrawScale = () => { q('[data-scale-rows]').innerHTML = scaleRows(); };
+
+    sheet.addEventListener('input', () => {
+      readRows();
+      d.groups.forEach((gr, gi) => { const n = q(`[data-gnote="${gi}"]`); if (n) n.textContent = gr.categories.length ? groupNote(gr) : 'No categories yet.'; });
+      q('[data-groups-note]').textContent = groupsNote();
+    });
     sheet.addEventListener('change', (e) => {
       if (e.target.name === 'replaceLowest') q('[data-exam-cat]').hidden = !e.target.checked;
       if (e.target.name === 'passFail') q('[data-pass-min]').hidden = !e.target.checked;
+      if (e.target.name === 'examCat') d.examCat = e.target.value;
     });
     sheet.addEventListener('click', (e) => {
       const t = e.target;
-      const mode = t.closest('[data-mode]');
-      if (mode) {
-        readRows();
-        d.mode = mode.dataset.mode;
-        sheet.querySelectorAll('[data-mode]').forEach((b) => b.setAttribute('aria-pressed', String(b === mode)));
-        return redraw();
-      }
-      if (t.closest('[data-add-cat]')) { readRows(); d.categories.push({ id: tmpId(), name: '', weight: '', drop: '' }); return redraw(); }
-      const addSub = t.closest('[data-add-sub]');
-      if (addSub) {
-        readRows();
-        const c = d.categories[Number(addSub.dataset.addSub)];
-        c.subs ??= [];
-        // A category becomes a container the moment it gets its first subcategory: its own
-        // items/drop/bonus stop applying (its weight still does, split across the subs).
-        if (c.subs.length === 0) { delete c.drop; delete c.bonus; }
-        c.subs.push({ id: tmpId(), name: '', weight: '', drop: '' });
-        return redraw();
-      }
+      const gm = t.closest('[data-gmode]');
+      if (gm) { readRows(); d.groups[Number(gm.dataset.gmode)].mode = gm.dataset.mode; return redrawGroups(); }
+      const ac = t.closest('[data-add-cat]');
+      if (ac) { readRows(); d.groups[Number(ac.dataset.addCat)].categories.push({ id: tmpId(), name: '', weight: '', total: '', drop: '' }); return redrawGroups(); }
       const rc = t.closest('[data-rm-cat]');
       if (rc) {
         readRows();
-        const c = d.categories[Number(rc.dataset.rmCat)];
-        const leafIds = c.subs?.length ? c.subs.map((sc) => sc.id) : [c.id];
-        const count = (course.grades ?? []).filter((it) => leafIds.includes(it.catId)).length;
-        if (count && !confirm(`Remove ${c.name}? Its ${count} ${count === 1 ? 'score moves' : 'scores move'} to the first remaining category.`)) return undefined;
-        d.categories.splice(Number(rc.dataset.rmCat), 1);
-        return redraw();
-      }
-      const rs2 = t.closest('[data-rm-sub]');
-      if (rs2) {
-        readRows();
-        const group = rs2.closest('[data-catgroup]');
-        const c = d.categories[Number(group.dataset.catgroup)];
-        const si = Number(rs2.closest('[data-sub]').dataset.sub);
-        const sc = c.subs[si];
-        const count = (course.grades ?? []).filter((it) => it.catId === sc.id).length;
-        if (count && !confirm(`Remove ${sc.name}? Its ${count} ${count === 1 ? 'score moves' : 'scores move'} to the first remaining category.`)) return undefined;
-        c.subs.splice(si, 1);
-        return redraw();
+        const [gi, ci] = rc.dataset.rmCat.split(':').map(Number);
+        const c = d.groups[gi].categories[ci];
+        const count = (course.grades ?? []).filter((it) => it.catId === c.id).length;
+        if (count && !confirm(`Remove ${c.name || 'this category'}? Its ${count} ${count === 1 ? 'score moves' : 'scores move'} to the first category.`)) return undefined;
+        d.groups[gi].categories.splice(ci, 1);
+        if (d.examCat === c.id) d.examCat = '';
+        return redrawGroups();
       }
       const preset = t.closest('[data-preset]');
-      if (preset) { readRows(); d.scale = (preset.dataset.preset === 'pm' ? SCALE_PM : SCALE_PLAIN).map((x) => ({ ...x })); return redraw(); }
-      if (t.closest('[data-add-scale]')) { readRows(); d.scale.push({ letter: '', min: 0 }); return redraw(); }
+      if (preset) { readRows(); d.scale = (preset.dataset.preset === 'pm' ? SCALE_PM : SCALE_PLAIN).map((x) => ({ ...x })); return redrawScale(); }
+      if (t.closest('[data-add-scale]')) { readRows(); d.scale.push({ letter: '', min: 0 }); return redrawScale(); }
       const rs = t.closest('[data-rm-scale]');
-      if (rs) { readRows(); d.scale.splice(Number(rs.dataset.rmScale), 1); return redraw(); }
+      if (rs) { readRows(); d.scale.splice(Number(rs.dataset.rmScale), 1); return redrawScale(); }
       if (!t.closest('[data-save]')) return undefined;
 
       readRows();
-      // A container category (has subs) drops any empty trailing subs but otherwise keeps its subs
-      // as-is; a category with no named subs left just goes back to being a leaf.
-      const cats = d.categories
-        .map((c) => (c.subs?.length ? { ...c, subs: c.subs.filter((sc) => sc.name.trim()) } : c))
-        .filter((c) => c.name.trim());
-      if (!cats.length) { toast('Add at least one category.'); return undefined; }
-      for (const c of cats) if (c.subs && !c.subs.length) delete c.subs;
+      const groups = d.groups.map((gr) => ({
+        id: gr.id, name: gr.name, weight: gr.weight === '' ? 0 : gr.weight, mode: gr.mode,
+        categories: gr.categories.filter((c) => c.name.trim()),
+      }));
+      if (!groups.some((gr) => gr.categories.length)) { toast('Add at least one category.'); return undefined; }
       const scale = d.scale.filter((x) => x.letter && !Number.isNaN(x.min));
       if (!scale.length) { toast('Add at least one letter.'); return undefined; }
+      const liveIds = new Set(groups.flatMap((gr) => gr.categories.map((c) => c.id)));
       const credits = Number(q('[name="credits"]').value);
-      const examVal = q('[name="examCat"]')?.value ?? '';
       saveGrading(course.id, {
-        mode: d.mode, categories: cats, scale,
+        groups, scale,
         credits: Number.isNaN(credits) ? 0 : credits,
         passFail: q('[name="passFail"]').checked,
         passMin: Number(q('[name="passMin"]').value) || 70,
         replaceLowest: q('[name="replaceLowest"]').checked,
-        examCat: examVal,
+        examCat: liveIds.has(d.examCat) ? d.examCat : '',
       });
       close();
       play('pop');

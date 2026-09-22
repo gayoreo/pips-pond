@@ -1120,3 +1120,14 @@ body.is-locked { overflow: hidden; }
 
 /* One-line exam countdown */
 .exam-line { margin: 0; padding: 6px 10px; border-left: 6px solid var(--kind-exam); background: var(--card); border-radius: var(--wobble-2); font-size: 15px; }
+
+/* Grade groups (Lecture / Lab) on the course page and in grade setup */
+.grade-group { margin-top: 4px; }
+.grade-group__head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 10px 2px 6px; }
+.grade-group__name { margin: 0; font-family: var(--font-hand); font-size: 22px; font-weight: 700; }
+.grade-group__name .muted { font-family: var(--font-body); font-size: 12px; font-weight: 400; }
+.grade-group__pct { font-weight: 800; }
+.grade-groupset { border-left: 8px solid var(--tape); }
+.grade-gweight { display: flex; align-items: center; gap: 6px; font-size: 13px; white-space: nowrap; }
+.grade-gweight input { width: 56px; border: 0; border-bottom: 2px solid var(--ink); background: transparent; font: inherit; padding: 2px 4px; text-align: right; }
+.grade-row input[data-c="total"] { flex: 0 0 56px; }

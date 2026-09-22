@@ -1,5 +1,5 @@
 import { getSettings, getEntries, saveSettings, deleteEntry } from '../data/db.js';
-import { budget } from '../core/calc.js';
+import { budget, isBaseChange } from '../core/calc.js';
 import {
   todayKey, toKey, formatLong, formatTime, monthKey, addMonths, daysInMonth, formatMonth, dayOfWeek,
 } from '../core/dates.js';
@@ -17,16 +17,18 @@ function dayMood(settings, all, key) {
 }
 
 function summary(list) {
-  let swipes = 0, points = 0, exchanges = 0;
+  let swipes = 0, points = 0, exchanges = 0, guests = 0;
   for (const e of list) {
     if (e.type === 'swipe') swipes += e.amount;
     if (e.type === 'points') points += e.amount;
     if (e.type === 'exchange') exchanges += e.amount;
+    if (e.type === 'guest') guests += e.amount;
   }
   const bits = [];
   if (swipes) bits.push(plural(swipes, 'swipe'));
   if (points) bits.push(`${money(points)} points`);
   if (exchanges) bits.push(plural(exchanges, 'exchange'));
+  if (guests) bits.push(guests === 1 ? '1 guest pass' : `${guests} guest passes`);
   return bits.length ? `Total: ${bits.join(' · ')}` : '';
 }
 
@@ -37,7 +39,7 @@ function entryRow(e) {
       <button type="button" class="entry" data-entry="${esc(e.id)}">
         <span class="entry__time">${sameDay ? formatTime(e.createdAt) : '—'}</span>
         <span class="entry__what">${esc(describe(e.type, e.amount))}</span>
-        <span class="entry__edit">${e.type.startsWith('adjust') ? 'remove' : 'edit'}</span>
+        <span class="entry__edit">${isBaseChange(e.type) ? 'remove' : 'edit'}</span>
       </button>
     </li>`;
 }
@@ -133,7 +135,7 @@ export async function renderLog(root) {
           <button type="button" data-layout="journal" aria-pressed="${layout === 'journal'}">journal</button>
         </div>
       </header>
-      ${layout === 'calendar' ? calendarHTML(settings, all) + dayPageHTML(settings, all, view.selected) : journalHTML(settings, all)}
+      ${layout === 'calendar' ? `<div class="log-split">${calendarHTML(settings, all)}${dayPageHTML(settings, all, view.selected)}</div>` : journalHTML(settings, all)}
     </div>`;
 
   root.querySelector('.log').addEventListener('click', async (e) => {
@@ -155,10 +157,10 @@ export async function renderLog(root) {
     if (entryBtn) {
       const entry = all.find((x) => x.id === entryBtn.dataset.entry);
       if (!entry) return;
-      if (entry.type.startsWith('adjust')) {
-        if (!confirm('Remove this balance fix?')) return;
+      if (isBaseChange(entry.type)) {
+        if (!confirm(`Remove this ${entry.type.startsWith('fund') ? 'added funds entry' : 'balance fix'}?`)) return;
         await deleteEntry(entry.id);
-        return toast('Balance fix removed.');
+        return toast('Removed.');
       }
       return openFeedSheet({ entry });
     }

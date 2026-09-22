@@ -1,64 +1,27 @@
-import { getSettings, getEntries, getFavorites, getProfile } from '../data/db.js';
+import { getSettings, getEntries, getFavorites, getProfile, saveProfile } from '../data/db.js';
 import { budget } from '../core/calc.js';
-import { todayKey, formatLong, formatShort } from '../core/dates.js';
-import { moodFor, isEating, MOOD_LABEL } from '../pip/mood.js';
-import { pipLine } from '../pip/lines.js';
-import { frogSVG } from '../pip/frog.js';
-import { esc, money, count } from '../ui/dom.js';
+import { todayKey, formatLong, formatShort, addDays, isDayOff } from '../core/dates.js';
+import { reportStats, nextSemesterDefaults } from '../core/semester.js';
+import { moodFor, reactionMood } from '../pip/mood.js';
+import { pipLine, pick, PET } from '../pip/lines.js';
+import { outfitFor } from '../pip/frog.js';
+import { esc, money, count, plural } from '../ui/dom.js';
+import { noteHTML, stampsHTML, pondSceneHTML } from '../ui/widgets.js';
+import { reportHTML } from '../ui/report.js';
+import { play } from '../ui/sound.js';
 import { openFeedSheet, quickLog, describe } from './feed.js';
+import { beginNewSemester } from './tutorial.js';
 
-const RING = 2 * Math.PI * 40;
-
-function noteHTML(kind, label, p, fmt) {
-  const isSwipes = kind === 'swipes';
-  const over = p.leftToday < -0.004;
-  const frac = p.daily > 0 ? Math.min(1, Math.max(0, p.leftToday / p.daily)) : 0;
-  const caption = isSwipes
-    ? (over ? 'over this week' : 'available today')
-    : (over ? 'over today' : 'left today');
-  const weekStat = isSwipes
-    ? `<span class="stat__v">${fmt(p.usedWeek)}</span><span class="stat__s">used of ${fmt(p.weekly)}</span>`
-    : `<span class="stat__v">${fmt(Math.abs(p.leftWeek))}</span><span class="stat__s">${p.leftWeek < -0.004 ? 'over' : 'left'}</span>`;
-
-  return `
-  <section class="note note--${kind}" aria-label="${label}">
-    <span class="note__label">${label}</span>
-    <div class="ring">
-      <svg viewBox="0 0 100 100" width="92" height="92" aria-hidden="true">
-        <g filter="url(#wobble)">
-          <circle class="ring__track" cx="50" cy="50" r="40" fill="none" stroke-width="9"/>
-          <circle class="ring__fill" cx="50" cy="50" r="40" fill="none" stroke-width="9" stroke-linecap="round"
-            stroke-dasharray="${(frac * RING).toFixed(1)} ${RING.toFixed(1)}" transform="rotate(-90 50 50)"/>
-        </g>
-      </svg>
-      <span class="ring__value${over ? ' is-over' : ''}">${fmt(Math.abs(p.leftToday))}</span>
-    </div>
-    <span class="note__caption">${caption}</span>
-    <div class="note__stats">
-      <div class="stat"><span class="stat__k">Week</span>${weekStat}</div>
-      <div class="stat"><span class="stat__k">Semester</span><span class="stat__v">${fmt(p.balance)}</span><span class="stat__s">of ${fmt(p.total)}</span></div>
-    </div>
-  </section>`;
-}
-
-function stampsHTML(ex, resets) {
-  const slots = Math.max(ex.limit, ex.used);
-  const stamps = Array.from({ length: slots }, (_, i) => {
-    if (i >= ex.used) return '<span class="stamp" aria-hidden="true"></span>';
-    return `<span class="stamp is-used${i >= ex.limit ? ' is-over' : ''}" aria-hidden="true">USED</span>`;
-  }).join('');
-  const notes = [];
-  if (!ex.allowedToday) notes.push('not available today');
-  if (ex.used > ex.limit) notes.push('over the weekly limit');
-  notes.push(`resets ${formatShort(resets)}`);
-  return `
-  <section class="stamps" aria-label="Exchanges: ${ex.used} of ${ex.limit} used this week">
-    <div>
-      <p class="stamps__title">Exchanges this week</p>
-      <p class="stamps__sub" id="ex-note">${notes.join(' · ')}</p>
-    </div>
-    <div class="stamps__row">${stamps}</div>
-  </section>`;
+// Days in a row (before today) that ended on pace.
+function streakDays(settings, entries, today) {
+  let n = 0;
+  let k = addDays(today, -1);
+  for (let i = 0; i < 60 && k >= settings.start; i++, k = addDays(k, -1)) {
+    if (k > settings.end || isDayOff(k, settings.daysOff ?? [])) continue;
+    if (moodFor(budget(settings, entries, k)) === 'sad') break;
+    n++;
+  }
+  return n;
 }
 
 function favRowHTML(favorites) {
@@ -73,11 +36,72 @@ function favRowHTML(favorites) {
   </div>`;
 }
 
-function phaseHTML(b, settings, name) {
-  if (b.phase === 'before') return `<section class="card"><p class="hand">Semester starts ${formatShort(settings.start)}. ${esc(name)} is napping until then.</p></section>`;
-  if (b.phase === 'after') return `<section class="card"><p class="hand">The semester’s over! ${esc(name)} is resting.</p></section>`;
+function recapHTML(settings, entries, b, profile) {
+  if (settings.weeklyRecap === false || b.phase !== 'during') return '';
+  if (profile.recapSeen === b.weekStart || b.weekStart <= settings.start) return '';
+  const from = addDays(b.weekStart, -7);
+  const to = addDays(b.weekStart, -1);
+  let sw = 0, pt = 0, ex = 0;
+  for (const e of entries) {
+    if (e.date < from || e.date > to) continue;
+    if (e.type === 'swipe') sw += e.amount;
+    if (e.type === 'points') pt += e.amount;
+    if (e.type === 'exchange') ex += e.amount;
+  }
+  const last = budget(settings, entries, to);
+  const onPace = last.points.leftWeek >= -0.004 && last.swipes.leftWeek >= 0;
+  return `
+  <section class="recap" aria-label="Last week’s recap">
+    <p class="recap__title">Last week</p>
+    <p class="recap__body">${sw + pt + ex === 0
+      ? 'Nothing logged last week. If you ate on campus, add it from the Log tab!'
+      : `${plural(sw, 'swipe')} · ${money(pt)} points · ${plural(ex, 'exchange')}. ${onPace ? 'Right on pace!' : 'A little over, but this week re-balanced.'}`}</p>
+    <button type="button" class="btn-plain" data-recap-ok>got it</button>
+  </section>`;
+}
+
+function finalsHTML(b) {
+  if (!b.finals) return '';
+  const extraPts = b.points.daily - b.points.planDaily;
+  const extraSw = b.swipes.weekly - Math.round(b.swipes.planWeekly);
+  const bits = [];
+  if (b.points.total > 0 && extraPts > 0.5) bits.push(`${money(b.points.daily)} a day (${money(extraPts)} more than planned)`);
+  if (b.swipes.total > 0 && extraSw > 0) bits.push(`${plural(b.swipes.weekly, 'swipe')} this week (${extraSw} extra)`);
+  return `
+  <section class="finals" aria-label="Finals mode">
+    <p class="finals__title">Finals mode!</p>
+    <p class="finals__body">${bits.length
+      ? `You’ve got ${bits.join(' and ')}. Treat yourself, or a friend!`
+      : 'Home stretch! You’re right on budget. Fuel up for exams.'}</p>
+  </section>`;
+}
+
+function guestHTML(g) {
+  if (!g.total) return '';
+  return `
+  <section class="guest">
+    <span><b class="hand">Guest passes</b> <span class="muted">${Math.max(0, g.left)} of ${g.total} left</span></span>
+    <button type="button" class="btn-sketch btn-sketch--small" data-feed="guest">+ guest</button>
+  </section>`;
+}
+
+function phaseHTML(b, settings, name, stats, profile) {
+  if (b.phase === 'before') {
+    return `<section class="card"><p class="hand">Semester starts ${formatShort(settings.start)}. ${esc(name)} is napping until then.</p></section>`;
+  }
+  if (b.phase === 'after') {
+    return `
+    <section class="card">
+      <p class="hand">The semester’s over! ${esc(name)} is resting.</p>
+      <button type="button" class="btn-sketch btn-sketch--go" data-new-semester>Start next semester</button>
+    </section>
+    ${settings.reportCard !== false ? reportHTML(stats, { frogName: profile.frogName }) : ''}`;
+  }
   return '';
 }
+
+const LEAVES = Array.from({ length: 10 }, (_, i) =>
+  `<span class="leaf" style="--x:${(i * 37) % 100}%;--d:${(i % 5) * 0.18}s;--r:${(i * 53) % 360}deg" aria-hidden="true"></span>`).join('');
 
 export async function renderPond(root) {
   const settings = await getSettings();
@@ -87,45 +111,66 @@ export async function renderPond(root) {
   const name = profile.frogName;
   const today = todayKey();
   const b = budget(settings, entries, today);
-  const mood = isEating() ? 'eating' : moodFor(b);
-  const line = pipLine(mood, b, entries.length + Number(today.slice(-2)), profile.nickname);
+  const baseMood = moodFor(b);
+  const mood = reactionMood() ?? baseMood;
+  const streak = b.phase === 'during' ? streakDays(settings, entries, today) : 0;
+  const movingIn = sessionStorage.getItem('pond:movein') === '1';
+  if (movingIn) sessionStorage.removeItem('pond:movein');
+
+  const line = movingIn
+    ? `Welcome home${profile.nickname ? `, ${profile.nickname}` : ''}! This is our pond now.`
+    : pipLine(mood, b, {
+        seed: entries.length + Number(today.slice(-2)),
+        nick: profile.nickname,
+        streak,
+        finals: b.finals,
+      });
+  const stats = b.phase === 'after' ? reportStats(settings, entries) : null;
 
   root.innerHTML = `
-    <header>
-      <p class="eyebrow">${esc(settings.semesterName)} · ${b.daysLeft} eating ${b.daysLeft === 1 ? 'day' : 'days'} left</p>
+  <div class="pond-page">
+    <header class="pond-page__head">
+      <p class="eyebrow">${esc(settings.semesterName)} · ${b.daysLeft} eating ${b.daysLeft === 1 ? 'day' : 'days'} left${streak >= 3 ? ` · <span class="streak">${streak}-day streak</span>` : ''}</p>
       <h1 class="page-title">${formatLong(today)}</h1>
     </header>
 
-    <section aria-label="${esc(name)}">
-      <div class="pond">
-        <span class="pad pad--a"></span><span class="pad pad--b"></span>
-        <span class="ripple ripple--a"></span><span class="ripple ripple--b"></span>
-        <span class="mood-tag">${MOOD_LABEL[mood]}</span>
-        <div class="frog is-${mood}">${frogSVG(mood, name)}</div>
-      </div>
-      <p class="pip-says">“${esc(line)}”</p>
-    </section>
-
-    ${phaseHTML(b, settings, name)}
-
-    <div class="notes">
-      ${noteHTML('swipes', 'Swipes', b.swipes, count)}
-      ${noteHTML('points', 'Points', b.points, money)}
+    <div class="pond-page__a">
+      <section aria-label="${esc(name)}" class="pond-wrap">
+        ${pondSceneHTML({ mood, name, outfit: outfitFor(today), button: true, extraClass: movingIn ? 'is-moving-in' : '' })}
+        ${movingIn ? `<div class="leaves" aria-hidden="true">${LEAVES}</div>` : ''}
+        <p class="pip-says" aria-live="polite">“${esc(line)}”</p>
+      </section>
+      ${recapHTML(settings, entries, b, profile)}
+      ${finalsHTML(b)}
+      ${phaseHTML(b, settings, name, stats, profile)}
     </div>
 
-    ${stampsHTML(b.exchanges, b.weekResets)}
-
-    <section aria-label="Feed ${esc(name)}" data-feed-area>
-      <p class="feed__title">Feed ${esc(name)}:</p>
-      <div class="feed-row">
-        <button type="button" class="btn-sketch btn-sketch--swipe" data-feed="swipe">a swipe</button>
-        <button type="button" class="btn-sketch btn-sketch--points" data-feed="points">points</button>
-        <button type="button" class="btn-sketch btn-sketch--exchange" data-feed="exchange"${b.exchanges.allowedToday ? '' : ' disabled aria-describedby="ex-note"'}>exchange</button>
+    <div class="pond-page__b">
+      <div class="notes">
+        ${noteHTML('swipes', 'Swipes', b.swipes, count)}
+        ${noteHTML('points', 'Points', b.points, money)}
       </div>
-      ${favRowHTML(favorites)}
-    </section>`;
 
-  root.querySelector('[data-feed-area]').addEventListener('click', (e) => {
+      ${stampsHTML(b.exchanges, b.weekResets)}
+      ${guestHTML(b.guests)}
+
+      <section aria-label="Feed ${esc(name)}" data-feed-area>
+        <p class="feed__title">Feed ${esc(name)}:</p>
+        <div class="feed-row">
+          <button type="button" class="btn-sketch btn-sketch--swipe" data-feed="swipe">a swipe</button>
+          <button type="button" class="btn-sketch btn-sketch--points" data-feed="points">points</button>
+          <button type="button" class="btn-sketch btn-sketch--exchange" data-feed="exchange"${b.exchanges.allowedToday ? '' : ' disabled aria-describedby="ex-note"'}>exchange</button>
+        </div>
+        ${favRowHTML(favorites)}
+      </section>
+    </div>
+  </div>`;
+
+  const page = root.querySelector('.pond-page');
+  const says = root.querySelector('.pip-says');
+  let pets = 0;
+
+  page.addEventListener('click', async (e) => {
     const feed = e.target.closest('[data-feed]');
     if (feed) {
       if (feed.dataset.feed === 'points') return openFeedSheet({ type: 'points' });
@@ -135,6 +180,21 @@ export async function renderPond(root) {
     if (chip) {
       const f = favorites.find((x) => x.id === chip.dataset.fav);
       if (f) quickLog({ type: f.type, amount: f.amount, label: `${f.name} (${describe(f.type, f.amount)})` });
+      return;
     }
+    const frog = e.target.closest('[data-pet]');
+    if (frog) {
+      pets += 1;
+      frog.classList.remove('is-petted');
+      void frog.offsetWidth; // restart the hop animation
+      frog.classList.add('is-petted');
+      frog.insertAdjacentHTML('beforeend', '<svg class="heart" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-7-4.5-9.5-9A5.5 5.5 0 0 1 12 6a5.5 5.5 0 0 1 9.5 6C19 16.5 12 21 12 21z"/></svg>');
+      setTimeout(() => frog.querySelector('.heart')?.remove(), 900);
+      says.textContent = `“${pick(PET, pets + Date.now() % 7, profile.nickname)}”`;
+      play('ribbit');
+      return;
+    }
+    if (e.target.closest('[data-recap-ok]')) return saveProfile({ recapSeen: b.weekStart });
+    if (e.target.closest('[data-new-semester]')) return beginNewSemester(nextSemesterDefaults(settings, entries));
   });
 }

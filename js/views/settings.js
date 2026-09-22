@@ -1,26 +1,27 @@
-import { getSettings, saveSettings, getEntries, addEntry, resetAll, getTheme, setTheme, getProfile, saveProfile } from '../data/db.js';
+import {
+  getSettings, saveSettings, getEntries, addEntry, resetAll, getTheme, setTheme, getProfile, saveProfile, getFavorites,
+} from '../data/db.js';
 import { budget, exchangeDaysOf, DEFAULT_EXCHANGE_DAYS } from '../core/calc.js';
+import { learnWeights } from '../core/weights.js';
 import { todayKey, addDays, formatShort } from '../core/dates.js';
-import { esc, count, applyTheme } from '../ui/dom.js';
+import { seasonName } from '../core/semester.js';
+import { esc, count, money, plural, applyTheme } from '../ui/dom.js';
+import { infoBtn } from '../ui/info.js';
+import { setSoundEnabled, play } from '../ui/sound.js';
 import { toast } from '../ui/toast.js';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const THEMES = [['paper', 'Paper'], ['night', 'Night'], ['auto', 'Match phone']];
 let draftDaysOff = [];
 
-function seasonName(key) {
-  const m = Number(key.slice(5, 7));
-  const season = m <= 5 ? 'Spring' : m <= 7 ? 'Summer' : 'Fall';
-  return `${season} ${key.slice(0, 4)}`;
-}
-
 function defaults() {
   const start = todayKey();
   return {
     semesterName: seasonName(start), start, end: addDays(start, 104), weekStart: 0,
     swipesTotal: '', pointsTotal: '', swipesRollover: false, pointsRollover: false,
-    exchangeLimit: 2, exchangeUsesSwipe: false, exchangeDays: DEFAULT_EXCHANGE_DAYS,
-    daysOff: [], keypad: 'regular', logView: 'calendar',
+    exchangeLimit: 2, exchangeUsesSwipe: false, exchangeDays: DEFAULT_EXCHANGE_DAYS, guestTotal: 0,
+    daysOff: [], keypad: 'regular', logView: 'calendar', weightMode: 'auto',
+    sounds: true, weeklyRecap: true, reportCard: true,
   };
 }
 
@@ -37,7 +38,7 @@ function renderDaysOff(root) {
 
 function readForm(form) {
   const f = new FormData(form);
-  const num = (k) => (String(f.get(k)).trim() === '' ? NaN : Number(f.get(k)));
+  const num = (k) => (String(f.get(k) ?? '').trim() === '' ? NaN : Number(f.get(k)));
   const start = String(f.get('start'));
   return {
     semesterName: String(f.get('semesterName')).trim() || seasonName(start || todayKey()),
@@ -48,11 +49,16 @@ function readForm(form) {
     pointsTotal: num('pointsTotal'),
     swipesRollover: f.has('swipesRollover'),
     pointsRollover: f.has('pointsRollover'),
+    guestTotal: Number.isFinite(num('guestTotal')) ? num('guestTotal') : 0,
     exchangeLimit: num('exchangeLimit'),
     exchangeUsesSwipe: f.has('exchangeUsesSwipe'),
     exchangeDays: f.getAll('exchangeDays').map(Number),
     keypad: String(f.get('keypad')),
     logView: String(f.get('logView')),
+    weightMode: String(f.get('weightMode')),
+    sounds: f.has('sounds'),
+    weeklyRecap: f.has('weeklyRecap'),
+    reportCard: f.has('reportCard'),
     daysOff: draftDaysOff,
   };
 }
@@ -64,7 +70,31 @@ function problemWith(s) {
   if (!whole(s.swipesTotal)) return 'Swipes must be a whole number (0 is fine).';
   if (!(Number.isFinite(s.pointsTotal) && s.pointsTotal >= 0)) return 'Enter your points (0 is fine).';
   if (!whole(s.exchangeLimit)) return 'The exchange limit must be a whole number (0 is fine).';
+  if (!whole(s.guestTotal)) return 'Guest passes must be a whole number (0 is fine).';
   return null;
+}
+
+function weightsText(settings, entries) {
+  const learned = learnWeights(settings, entries, todayKey());
+  if (learned.days < 21) return `Learning… ${learned.days} of 21 days logged so far. Until then every day gets the same share.`;
+  const short = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  return `Learned from ${learned.days} days: ${learned.weights.map((w, i) => `${short[i]} ×${w}`).join(' · ')}`;
+}
+
+function shortcutsHTML(favorites) {
+  const base = `${location.origin}${location.pathname}`;
+  const links = [
+    ['Log a swipe', `${base}?log=swipe`],
+    ['Log an exchange', `${base}?log=exchange`],
+    ['Open the points keypad', `${base}?log=points`],
+    ...favorites.slice(0, 6).map((f) => [`Favorite: ${f.name}`, `${base}?fav=${encodeURIComponent(f.name)}`]),
+  ];
+  return links.map(([label, url]) => `
+    <div class="shortcut">
+      <span class="shortcut__label">${esc(label)}</span>
+      <code class="shortcut__url">${esc(url)}</code>
+      <button type="button" class="btn-plain" data-copy="${esc(url)}">copy</button>
+    </div>`).join('');
 }
 
 export async function renderSettings(root) {
@@ -72,15 +102,20 @@ export async function renderSettings(root) {
   const s = { ...defaults(), ...(saved ?? {}) };
   draftDaysOff = (s.daysOff ?? []).map((d) => ({ ...d }));
   const exDays = exchangeDaysOf(s);
-  const b = saved ? budget(saved, await getEntries(), todayKey()) : null;
+  const entries = await getEntries();
+  const b = saved ? budget(saved, entries, todayKey()) : null;
   const theme = getTheme();
   const profile = await getProfile();
+  const favorites = await getFavorites();
+  const rolledIn = (Number(s.swipesRolledIn) || 0) || (Number(s.pointsRolledIn) || 0);
 
   root.innerHTML = `
+  <div class="settings-page stack">
     <header>
       ${saved ? '' : '<p class="eyebrow">Welcome to the Pond</p>'}
       <h1 class="page-title">${saved ? 'Settings' : 'Let’s set up your pond'}</h1>
     </header>
+
     <section class="card">
       <h2 class="card__title">You &amp; your frog</h2>
       <div class="grid-2">
@@ -92,6 +127,7 @@ export async function renderSettings(root) {
         <a class="btn-plain" href="#/welcome">Replay tutorial</a>
       </div>
     </section>
+
     <form id="settings-form" class="stack" novalidate>
       <section class="card">
         <h2 class="card__title">Semester</h2>
@@ -100,7 +136,7 @@ export async function renderSettings(root) {
           <label class="field">Starts<input type="date" name="start" value="${esc(s.start)}" required></label>
           <label class="field">Ends<input type="date" name="end" value="${esc(s.end)}" required></label>
         </div>
-        <label class="field">Week starts on
+        <label class="field"><span class="field__label">Week starts on ${infoBtn('The day your weekly things reset: the swipe pool refills and the exchange stamps clear. Match it to your school’s meal plan week.')}</span>
           <select name="weekStart">
             ${DAYS.map((d, i) => `<option value="${i}"${Number(s.weekStart) === i ? ' selected' : ''}>${d}</option>`).join('')}
           </select>
@@ -113,25 +149,27 @@ export async function renderSettings(root) {
           <label class="field">Swipes / semester<input type="number" name="swipesTotal" inputmode="numeric" min="0" step="1" value="${esc(s.swipesTotal)}"></label>
           <label class="field">Points / semester ($)<input type="number" name="pointsTotal" inputmode="decimal" min="0" step="0.01" value="${esc(s.pointsTotal)}"></label>
         </div>
-        <label class="row"><span>Leftover swipes carry over</span><input type="checkbox" class="switch" name="swipesRollover"${s.swipesRollover ? ' checked' : ''}></label>
-        <label class="row"><span>Leftover points carry over</span><input type="checkbox" class="switch" name="pointsRollover"${s.pointsRollover ? ' checked' : ''}></label>
-        <p class="card__hint">Rollover is applied when you start next semester.</p>
+        ${rolledIn ? `<p class="card__hint">Plus rolled over from ${esc(s.rolledFrom ?? 'last semester')}: ${plural(Number(s.swipesRolledIn) || 0, 'swipe')} and ${money(Number(s.pointsRolledIn) || 0)}.</p>` : ''}
+        <label class="row"><span>Leftover swipes carry over ${infoBtn('When you start next semester, unused swipes are added to it. Leave off if your school resets swipes each semester.')}</span><input type="checkbox" class="switch" name="swipesRollover"${s.swipesRollover ? ' checked' : ''}></label>
+        <label class="row"><span>Leftover points carry over ${infoBtn('When you start next semester, unused points are added to it. Many schools roll points from fall to spring only.')}</span><input type="checkbox" class="switch" name="pointsRollover"${s.pointsRollover ? ' checked' : ''}></label>
+        <label class="field"><span class="field__label">Guest passes / semester ${infoBtn('Guest swipes for friends or family, if your plan has them. They’re tracked separately and don’t use your own swipes. 0 hides the guest counter.')}</span>
+          <input type="number" name="guestTotal" inputmode="numeric" min="0" step="1" value="${esc(s.guestTotal || 0)}"></label>
       </section>
 
       <section class="card">
         <h2 class="card__title card__title--plum">Exchanges</h2>
         <label class="field">Max per week<input type="number" name="exchangeLimit" inputmode="numeric" min="0" step="1" value="${esc(s.exchangeLimit)}"></label>
         <fieldset class="days-pick">
-          <legend class="field">Allowed on</legend>
+          <legend class="field">Allowed on ${infoBtn('Exchanges can only be logged on these days. On other days the exchange button is greyed out.')}</legend>
           ${DAYS.map((d, i) => `
             <label class="daychip"><input type="checkbox" name="exchangeDays" value="${i}"${exDays.includes(i) ? ' checked' : ''}><span>${d.slice(0, 3)}</span></label>`).join('')}
         </fieldset>
-        <label class="row"><span>An exchange also uses a swipe</span><input type="checkbox" class="switch" name="exchangeUsesSwipe"${s.exchangeUsesSwipe ? ' checked' : ''}></label>
+        <label class="row"><span>An exchange also uses a swipe ${infoBtn('Turn on if each meal exchange also takes one swipe from your balance. Off means exchanges only count toward the weekly limit.')}</span><input type="checkbox" class="switch" name="exchangeUsesSwipe"${s.exchangeUsesSwipe ? ' checked' : ''}></label>
         <p class="card__hint">Resets each week. Unused exchanges don’t carry over.</p>
       </section>
 
       <section class="card">
-        <h2 class="card__title">Days off (naptime)</h2>
+        <h2 class="card__title">Days off (naptime) ${infoBtn('Breaks and holidays when you won’t eat on campus. They’re left out of the daily points budget and the swipe pool, and the frog naps.')}</h2>
         <div class="chip-row" id="days-off-list"></div>
         <div class="grid-2">
           <label class="field">First day<input type="date" id="off-from"></label>
@@ -139,23 +177,33 @@ export async function renderSettings(root) {
         </div>
         <label class="field">Label<input id="off-label" maxlength="40" autocomplete="off"></label>
         <button type="button" class="btn-sketch" id="off-add">+ add days off</button>
-        <p class="card__hint">Days off are left out of your daily budget. Remember to save.</p>
+        <p class="card__hint">Remember to save.</p>
       </section>
 
       <section class="card">
-        <h2 class="card__title">Logging</h2>
-        <label class="field">Keypad
+        <h2 class="card__title">Budget &amp; logging</h2>
+        <label class="field"><span class="field__label">Daily points split ${infoBtn('Auto-learn: after 3 weeks, days you usually spend more on (like weekdays) get a bigger share of your daily points. Equal: every eating day gets the same amount.')}</span>
+          <select name="weightMode">
+            <option value="auto"${s.weightMode !== 'equal' ? ' selected' : ''}>Auto-learn my habits</option>
+            <option value="equal"${s.weightMode === 'equal' ? ' selected' : ''}>Every day equal</option>
+          </select>
+        </label>
+        ${saved && s.weightMode !== 'equal' ? `<p class="card__hint">${esc(weightsText(saved, entries))}</p>` : ''}
+        <label class="field"><span class="field__label">Keypad ${infoBtn('Type the dot: you tap 4 . 7 5. Cents: you tap 4 7 5 and it fills in the cents, like a cash register.')}</span>
           <select name="keypad">
             <option value="regular"${s.keypad !== 'cents' ? ' selected' : ''}>Type the dot (4 . 7 5)</option>
             <option value="cents"${s.keypad === 'cents' ? ' selected' : ''}>Cents (4 7 5 → $4.75)</option>
           </select>
         </label>
-        <label class="field">Log tab layout
+        <label class="field"><span class="field__label">Log tab layout ${infoBtn('Calendar shows a month with a mood stamp per day. Journal shows scrolling day pages. You can also switch from the Log tab.')}</span>
           <select name="logView">
             <option value="calendar"${s.logView !== 'journal' ? ' selected' : ''}>Calendar + day page</option>
             <option value="journal"${s.logView === 'journal' ? ' selected' : ''}>Journal pages</option>
           </select>
         </label>
+        <label class="row"><span>Sounds ${infoBtn('Little chomp and ribbit sounds when you log or pet the frog. Phones that support it buzz too.')}</span><input type="checkbox" class="switch" name="sounds"${s.sounds !== false ? ' checked' : ''}></label>
+        <label class="row"><span>Weekly recap ${infoBtn('At the start of each week, a note on the Pond sums up last week.')}</span><input type="checkbox" class="switch" name="weeklyRecap"${s.weeklyRecap !== false ? ' checked' : ''}></label>
+        <label class="row"><span>Semester report card ${infoBtn('When the semester ends, the Pond shows a report card with your stats and a grade.')}</span><input type="checkbox" class="switch" name="reportCard"${s.reportCard !== false ? ' checked' : ''}></label>
         ${saved ? '<a class="btn-plain" href="#/favorites">Edit favorites →</a>' : ''}
       </section>
 
@@ -164,13 +212,34 @@ export async function renderSettings(root) {
 
     ${saved ? `
     <section class="card card--sticky">
-      <h2 class="card__title">Match my card</h2>
+      <h2 class="card__title">Match my card ${infoBtn('Enter what your school card or dining app shows right now. The app logs a “balance fix” for the difference, so your history stays intact.')}</h2>
       <p class="card__hint">Started mid-semester, or the numbers drifted? Enter what your card shows and the app logs an adjustment.</p>
       <div class="grid-2">
         <label class="field">Swipes now<input id="match-swipes" type="number" inputmode="numeric" min="0" step="1" placeholder="${esc(count(b.swipes.balance))}"></label>
         <label class="field">Points now<input id="match-points" type="number" inputmode="decimal" min="0" step="0.01" placeholder="${esc(b.points.balance.toFixed(2))}"></label>
       </div>
       <button type="button" class="btn-sketch" id="match-go">Match</button>
+    </section>
+
+    <section class="card">
+      <h2 class="card__title">Add funds ${infoBtn('Bought more points or swipes mid-semester? Add them here and your budget re-balances from the new total.')}</h2>
+      <div class="grid-2">
+        <label class="field">Points added ($)<input id="fund-points" type="number" inputmode="decimal" min="0" step="0.01"></label>
+        <label class="field">Swipes added<input id="fund-swipes" type="number" inputmode="numeric" min="0" step="1"></label>
+      </div>
+      <button type="button" class="btn-sketch" id="fund-go">Add</button>
+    </section>
+
+    <section class="card">
+      <h2 class="card__title">Semesters &amp; your data ${infoBtn('See past semesters and their report cards, start the next semester, download your data, or import your school’s transaction history.')}</h2>
+      <a class="btn-plain" href="#/semesters">Semester history &amp; next semester →</a>
+      <a class="btn-plain" href="#/data">Export, import &amp; backups →</a>
+    </section>
+
+    <section class="card">
+      <h2 class="card__title">iPhone shortcuts ${infoBtn('In the Shortcuts app: New Shortcut → add “Open URLs” → paste a link below. Then add it to your Home Screen, or assign it in Settings → Accessibility → Touch → Back Tap.')}</h2>
+      <p class="card__hint">Open one of these links to log without tapping through the app. Shortcuts open links in Safari, which keeps its own data until sign-in and sync arrive, so for now use them from the browser you set up in.</p>
+      ${shortcutsHTML(favorites)}
     </section>` : ''}
 
     <section class="card">
@@ -184,11 +253,12 @@ export async function renderSettings(root) {
     <section class="card">
       <h2 class="card__title card__title--danger">Danger zone</h2>
       <button type="button" class="btn-plain btn-plain--danger" id="reset">Erase all data on this device</button>
-    </section>` : ''}`;
+    </section>` : ''}
+  </div>`;
 
   renderDaysOff(root);
   const form = root.querySelector('#settings-form');
-  
+
   root.querySelector('#p-save').addEventListener('click', async () => {
     const frogName = root.querySelector('#p-frog').value.trim() || 'Pip';
     await saveProfile({ nickname: root.querySelector('#p-nick').value.trim(), frogName });
@@ -201,6 +271,7 @@ export async function renderSettings(root) {
     const problem = problemWith(next);
     if (problem) return toast(problem);
     await saveSettings({ ...(saved ?? {}), ...next });
+    setSoundEnabled(next.sounds);
     if (!saved) { location.hash = '#/pond'; toast('Welcome to the pond!'); } else { toast('Saved!'); }
   });
 
@@ -251,9 +322,30 @@ export async function renderSettings(root) {
     renderSettings(root);
   });
 
-  root.querySelector('#reset')?.addEventListener('click', async () => {
-    if (!confirm('Erase your semester and every entry on this device? This can’t be undone.')) return;
-    await resetAll();
+  root.querySelector('#fund-go')?.addEventListener('click', async () => {
+    const pt = Number(root.querySelector('#fund-points').value || 0);
+    const sw = Number(root.querySelector('#fund-swipes').value || 0);
+    if (!(pt > 0) && !(sw > 0)) return toast('Enter how much you added.');
+    if (sw && !Number.isInteger(sw)) return toast('Swipes must be a whole number.');
+    if (pt > 0) await addEntry({ type: 'fund-points', amount: Math.round(pt * 100) / 100 });
+    if (sw > 0) await addEntry({ type: 'fund-swipes', amount: sw });
+    play('pop');
+    toast('Added! Your budget re-balanced.');
     renderSettings(root);
+  });
+
+  root.querySelectorAll('[data-copy]').forEach((btn) => btn.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(btn.dataset.copy);
+      toast('Link copied!');
+    } catch {
+      toast('Couldn’t copy. Press and hold the link to copy it.');
+    }
+  }));
+
+  root.querySelector('#reset')?.addEventListener('click', async () => {
+    if (!confirm('Erase your semester, past semesters, and every entry on this device? This can’t be undone.')) return;
+    await resetAll();
+    location.hash = '#/welcome';
   });
 }

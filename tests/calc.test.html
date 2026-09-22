@@ -14,8 +14,11 @@
   <ol id="out"></ol>
 
   <script type="module">
-    import { budget } from '../js/core/calc.js';
-    import { eatingDays, startOfWeek } from '../js/core/dates.js';
+    import { budget, balances } from '../js/core/calc.js';
+    import { eatingDays, startOfWeek, addDays, dayOfWeek } from '../js/core/dates.js';
+    import { learnWeights } from '../js/core/weights.js';
+    import { rolloverFor, nextSemesterDefaults, reportStats } from '../js/core/semester.js';
+    import { parseCSV, parseDateLoose, parseAmount, mapSchoolRows } from '../js/data/importExport.js';
 
     const out = document.getElementById('out');
     let passed = 0, failed = 0;
@@ -80,6 +83,45 @@
 
     check('exchanges allowed on Wednesday', budget(s, [], '2026-09-02').exchanges.allowedToday, true);
     check('exchanges NOT allowed on Saturday', budget(s, [], '2026-09-05').exchanges.allowedToday, false);
+
+    // ---- Pass 4: funds, guests, weights, rollover, import ----
+    check('added $50 points raises the balance', balances(s, [{ type: 'fund-points', amount: 50, date: '2026-09-02' }]).points, 150);
+    check('added funds re-balance the daily budget (150 / 7)',
+      budget(s, [{ type: 'fund-points', amount: 50, date: '2026-09-02' }], '2026-09-02').points.daily, 150 / 7);
+    check('added swipes raise the swipe balance', balances(s, [{ type: 'fund-swipes', amount: 5, date: '2026-09-02' }]).swipes, 15);
+    check('guest passes are counted separately',
+      budget({ ...s, guestTotal: 4 }, [{ type: 'guest', amount: 1, date: '2026-09-02' }], '2026-09-02').guests.left, 3);
+    check('guest passes don’t use swipes',
+      budget({ ...s, guestTotal: 4 }, [{ type: 'guest', amount: 1, date: '2026-09-02' }], '2026-09-02').swipes.balance, 10);
+    check('rolled-in points add to the total', budget({ ...s, pointsRolledIn: 20 }, [], '2026-09-01').points.total, 120);
+
+    // Weights: 5 weeks where weekends cost nothing and weekdays cost $10
+    const ws = { start: '2026-08-31', end: '2026-12-18', weekStart: 1, swipesTotal: 0, pointsTotal: 1000, exchangeLimit: 0, daysOff: [] };
+    const hist = [];
+    for (let k = ws.start; k < '2026-10-05'; k = addDays(k, 1)) {
+      const d = dayOfWeek(k);
+      if (d !== 0 && d !== 6) hist.push({ type: 'points', amount: 10, date: k });
+    }
+    const lw = learnWeights(ws, hist, '2026-10-05');
+    check('auto-learn: weekday weight goes up', lw.weights[2] > 1, true);
+    check('auto-learn: weekend weight goes down', lw.weights[6] < 1, true);
+    check('auto-learn: not enough history → equal', learnWeights(ws, hist, '2026-09-10').weights[6], 1);
+    check('equal mode ignores history', budget({ ...ws, weightMode: 'equal' }, hist, '2026-10-05').weights[6], 1);
+    const wb = budget(ws, hist, '2026-10-06');
+    check('weighted: a Tuesday gets more than an equal share', wb.points.daily > (1000 - 250) / eatingDays('2026-10-06', ws.end), true);
+
+    check('rollover only when switched on', rolloverFor({ ...s, pointsRollover: true }, e).points, 80);
+    check('rollover off → 0', rolloverFor(s, e).points, 0);
+    check('next semester name', nextSemesterDefaults({ ...s, semesterName: 'Fall 2026' }, e).semesterName, 'Spring 2027');
+    check('report card counts points spent', reportStats(s, e).pointsSpent, 20);
+
+    check('CSV parser handles quotes', parseCSV('a,b\n"x, y",2')[1][0], 'x, y');
+    check('date 9/21/2026', parseDateLoose('9/21/2026 12:04 PM'), '2026-09-21');
+    check('date Sep 21, 2026', parseDateLoose('Sep 21, 2026'), '2026-09-21');
+    check('amount -$5.45', parseAmount('-$5.45'), 5.45);
+    const mapped = mapSchoolRows([['9/2/2026', '-$4.00', 'Starbucks'], ['9/2/2026', '$50.00', 'Deposit'], ['bad', '1', '']],
+      { dateCol: 0, amountCol: 1, descCol: 2, mode: 'points', skipDeposits: true, existing: [] });
+    check('import maps rows and skips deposits', mapped.entries.length, 1);
 
     document.getElementById('summary').textContent = `${passed} passed, ${failed} failed`;
   </script>

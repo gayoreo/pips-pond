@@ -4,8 +4,8 @@ const KEY = 'pips-pond:v1';
 const THEME_KEY = 'pips-pond:theme';
 export const CHANGE_EVENT = 'pond:changed';
 
-const DEFAULT_PROFILE = { nickname: '', frogName: 'Pip', tutorialDone: false };
-const empty = () => ({ settings: null, entries: [], favorites: [], profile: { ...DEFAULT_PROFILE } });
+const DEFAULT_PROFILE = { nickname: '', frogName: 'Pip', tutorialDone: false, recapSeen: '', reportSeen: '' };
+const empty = () => ({ settings: null, entries: [], favorites: [], profile: { ...DEFAULT_PROFILE }, archive: [] });
 
 function load() {
   try {
@@ -100,6 +100,55 @@ export async function saveProfile(patch) {
   const data = load();
   data.profile = { ...DEFAULT_PROFILE, ...data.profile, ...patch };
   save(data);
+}
+
+// ---------- semesters ----------
+// Past semesters: [{ id, settings, entries, closedAt }]
+export async function getArchive() {
+  return load().archive;
+}
+
+// Moves the current semester (settings + entries) into the archive and starts a new one.
+export async function startNewSemester(nextSettings) {
+  const data = load();
+  if (data.settings) {
+    data.archive.push({
+      id: newId(),
+      settings: data.settings,
+      entries: data.entries.filter((e) => !e.deleted),
+      closedAt: new Date().toISOString(),
+    });
+  }
+  data.entries = [];
+  data.settings = { ...nextSettings, updatedAt: new Date().toISOString() };
+  save(data);
+}
+
+// ---------- bulk (import / export) ----------
+export async function addEntries(list) {
+  const now = new Date().toISOString();
+  const data = load();
+  for (const e of list) {
+    data.entries.push({
+      id: newId(), type: e.type, amount: Number(e.amount), date: e.date, note: e.note ?? '',
+      createdAt: now, updatedAt: now, deleted: false, synced: false,
+    });
+  }
+  save(data);
+  return list.length;
+}
+
+export async function exportAll() {
+  return { app: 'pips-pond', version: 1, exportedAt: new Date().toISOString(), ...load() };
+}
+
+export async function importAll(backup) {
+  if (!backup || typeof backup !== 'object' || !Array.isArray(backup.entries)) {
+    throw new Error('That file isn’t a Pip’s Pond backup.');
+  }
+  const { app, version, exportedAt, ...rest } = backup;
+  localStorage.setItem(KEY, JSON.stringify({ ...empty(), ...rest }));
+  window.dispatchEvent(new Event(CHANGE_EVENT));
 }
 
 // ---------- misc ----------

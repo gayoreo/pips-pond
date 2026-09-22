@@ -401,3 +401,209 @@ body.no-tabs #app { padding-bottom: calc(env(safe-area-inset-bottom) + 24px); }
   top: calc(env(safe-area-inset-top) + 12px);
   bottom: auto;
 }
+
+/* =====================================================================
+   Pass 4: tutorial v2, frog extras, recaps, info icons, data, desktop
+   ===================================================================== */
+
+/* ---------- Frog: petting, hearts, move-in ---------- */
+.frog-btn {
+  padding: 0; border: none; background: none; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.frog-btn:focus-visible { outline-offset: -6px; border-radius: 50%; }
+.frog.is-petted svg { animation: pet-hop 0.5s ease-out; }
+@keyframes pet-hop {
+  0% { transform: translateY(0) scale(1, 1); }
+  30% { transform: translateY(-16px) scale(0.96, 1.05); }
+  60% { transform: translateY(0) scale(1.06, 0.94); }
+  100% { transform: translateY(0) scale(1, 1); }
+}
+.frog.is-shocked svg { animation: shake 0.3s ease-in-out 3; }
+@keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
+.heart {
+  position: absolute; left: 50%; top: 10px; width: 26px; height: 26px; margin-left: -13px;
+  fill: #E0607E; pointer-events: none;
+  animation: heart-up 0.9s ease-out forwards;
+}
+@keyframes heart-up { from { opacity: 1; transform: translateY(0) scale(0.6); } to { opacity: 0; transform: translateY(-50px) scale(1.2); } }
+
+.pond-wrap { position: relative; }
+.pond.is-moving-in .frog svg { animation: move-in 1.1s cubic-bezier(.3,1.4,.5,1) both; }
+@keyframes move-in {
+  0% { transform: translateY(140px) scale(0.6); }
+  55% { transform: translateY(-24px) scale(1.05); }
+  75% { transform: translateY(0) scale(1.04, 0.95); }
+  100% { transform: translateY(0) scale(1); }
+}
+.leaves { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.leaf {
+  position: absolute; top: -20px; left: var(--x); width: 16px; height: 10px;
+  background: var(--green-fill); border: 2px solid var(--ink);
+  border-radius: 0 100% 0 100%;
+  animation: leaf-fall 1.8s ease-in var(--d) both;
+}
+@keyframes leaf-fall {
+  from { transform: translateY(0) rotate(var(--r)); opacity: 1; }
+  to { transform: translateY(210px) rotate(calc(var(--r) + 220deg)); opacity: 0; }
+}
+
+.streak { color: var(--points); }
+
+/* ---------- Pond page cards ---------- */
+.pond-page { display: flex; flex-direction: column; gap: 12px; }
+.pond-page__a, .pond-page__b { display: flex; flex-direction: column; gap: 12px; }
+
+.recap, .finals {
+  position: relative; padding: 10px 14px; box-shadow: 0 3px 0 var(--shadow);
+}
+.recap { background: var(--pond); transform: rotate(-0.6deg); }
+.finals { background: var(--plum-note); transform: rotate(0.5deg); }
+.recap__title, .finals__title { margin: 0; font-family: var(--font-hand); font-size: 22px; font-weight: 700; }
+.recap__body, .finals__body { margin: 2px 0 0; font-size: 15px; }
+.recap .btn-plain { position: absolute; right: 8px; top: 2px; font-size: 18px; }
+
+.guest {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 6px 6px 6px 14px; border: 2px dashed var(--ink-2); border-radius: 14px;
+}
+.guest .hand { font-size: 21px; }
+.btn-sketch--small { min-height: 44px; padding: 0 12px; font-size: 20px; }
+
+/* ---------- Report card ---------- */
+.report {
+  display: flex; flex-direction: column; gap: 8px; padding: 14px 16px;
+  background: var(--card); border: 2.5px solid var(--ink); border-radius: var(--wobble-2);
+}
+.report__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.report__name { margin: 0; font-family: var(--font-hand); font-size: 30px; line-height: 1; }
+.report__grade {
+  flex-shrink: 0; width: 64px; height: 64px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  border: 3px solid var(--coral); color: var(--coral); transform: rotate(-10deg);
+  font-family: var(--font-hand); font-size: 34px; font-weight: 700;
+}
+.report__title { margin: 0; font-size: 20px; color: var(--green); }
+.report__grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; margin: 0; }
+.report__grid div { border-top: 1.5px dashed var(--line); padding-top: 4px; }
+.report__grid dt { font-size: 11px; font-weight: 800; letter-spacing: 0.6px; text-transform: uppercase; color: var(--ink-2); }
+.report__grid dd { margin: 0; font-size: 17px; font-weight: 800; }
+.report__grid small { font-size: 12px; font-weight: 600; color: var(--ink-2); }
+
+.page-title--small { font-size: 26px; margin-top: 8px; }
+.semester__head { display: flex; justify-content: space-between; }
+
+/* ---------- Info (i) buttons + popups ---------- */
+.info {
+  display: inline-flex; align-items: center; justify-content: center; vertical-align: middle;
+  width: 22px; height: 22px; margin: -4px 2px 0; padding: 0; position: relative;
+  border: 2px solid currentColor; border-radius: 50%;
+  background: var(--card); color: var(--ink-2);
+  font-family: Georgia, serif; font-style: italic; font-size: 13px; font-weight: 700;
+  line-height: 1; text-transform: none; letter-spacing: 0;
+}
+.info::after { content: ""; position: absolute; inset: -11px; } /* bigger tap target */
+.info[aria-expanded="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.info-pop {
+  position: absolute; z-index: 40; max-width: min(280px, calc(100vw - 16px));
+  padding: 10px 12px; background: var(--ink); color: var(--paper);
+  border-radius: 12px 4px 12px 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  font-family: var(--font-body); font-size: 14px; font-weight: 600; line-height: 1.35;
+  text-transform: none; letter-spacing: 0;
+}
+
+/* ---------- Settings extras ---------- */
+.shortcut { display: grid; grid-template-columns: 1fr auto; gap: 0 8px; align-items: center; padding: 6px 0; border-top: 1.5px dashed var(--line); }
+.shortcut__label { font-weight: 800; font-size: 14px; }
+.shortcut__url { grid-column: 1; font-size: 11px; color: var(--ink-2); overflow-wrap: anywhere; }
+.shortcut .btn-plain { grid-column: 2; grid-row: 1 / span 2; }
+
+/* ---------- Data page ---------- */
+.textarea {
+  width: 100%; min-height: 90px; padding: 8px; resize: vertical;
+  border: 2px solid var(--ink); border-radius: 10px 4px 10px 4px; background: var(--card);
+  font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px;
+  letter-spacing: 0; text-transform: none; font-weight: 400; color: var(--ink);
+}
+.field input[type="file"] { height: auto; padding: 8px 0; border: none; font-family: var(--font-body); font-size: 14px; }
+.preview { width: 100%; border-collapse: collapse; font-size: 14px; }
+.preview th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--ink-2); }
+.preview td, .preview th { padding: 4px 6px 4px 0; border-bottom: 1.5px dashed var(--line); }
+.data-page .btn-sketch { font-size: 19px; }
+
+/* ---------- Tutorial v2 ---------- */
+.tutorial__body { flex: 1; }
+.tut-guide { display: flex; flex-direction: column; gap: 10px; }
+.pond--small { height: 150px; }
+.pond--small .frog { top: -4px; }
+.bubble {
+  position: relative; margin: 6px 0 0; padding: 10px 14px;
+  background: var(--card); border: 2.5px solid var(--ink); border-radius: var(--wobble-2);
+  font-family: var(--font-hand); font-size: 21px; font-weight: 700; line-height: 1.15;
+}
+.bubble::before {
+  content: ""; position: absolute; left: 50%; top: -10px; width: 16px; height: 16px; margin-left: -8px;
+  background: var(--card); border-left: 2.5px solid var(--ink); border-top: 2.5px solid var(--ink);
+  transform: rotate(45deg);
+}
+.tut-practice { display: flex; flex-direction: column; gap: 12px; }
+.tut-practice__pond { position: relative; }
+.mini-pad { display: flex; flex-direction: column; gap: 8px; align-items: stretch; }
+.mini-pad .amount__value { align-self: center; font-size: 44px; min-width: 140px; }
+.mini-pad .keypad button { min-height: 44px; font-size: 24px; }
+.checklist { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.checklist li { display: flex; align-items: center; gap: 8px; font-size: 15px; color: var(--ink-2); }
+.checklist li::before {
+  content: ""; width: 20px; height: 20px; flex-shrink: 0;
+  border: 2px solid var(--ink); border-radius: 4px 7px 5px 6px; background: var(--card);
+}
+.checklist li.is-done { color: var(--ink); text-decoration: line-through; text-decoration-color: var(--green); }
+.checklist li.is-done::before { background: var(--green-fill); box-shadow: inset 0 0 0 3px var(--card); }
+.tutorial .card__title .muted { font-size: 18px; font-weight: 400; }
+
+/* ---------- Desktop ---------- */
+.tabs__brand { display: none; }
+
+@media (min-width: 900px) {
+  #tabs {
+    top: 0; bottom: 0; right: auto; width: 220px;
+    display: flex; flex-direction: column; gap: 6px;
+    padding: 28px 16px; border-top: none; border-right: 2px solid var(--ink);
+    background: var(--tape);
+  }
+  .tabs__brand { display: block; margin: 0 0 20px 6px; font-family: var(--font-hand); font-size: 32px; font-weight: 700; line-height: 1; }
+  #tabs a { flex-direction: row; justify-content: flex-start; padding: 0 14px; border: 2px solid transparent; border-radius: var(--wobble-1); }
+  #tabs a[aria-current="page"] { background: var(--pond); border-color: var(--ink); color: var(--ink); }
+  #tabs a[aria-current="page"]::after { display: none; }
+
+  #app { max-width: 1120px; margin: 0 auto 0 220px; padding: 36px 40px 48px; }
+  body.no-tabs #app { margin: 0 auto; max-width: 980px; }
+  @media (min-width: 1400px) { #app { margin-left: calc(220px + (100vw - 220px - 1120px) / 2); } }
+
+  .toast { left: calc(50% + 110px); }
+  body.no-tabs .toast { left: 50%; }
+
+  .pond-page { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 20px 32px; align-items: start; }
+  .pond-page__head { grid-column: 1 / -1; }
+  .pond-page .pond { height: 300px; }
+  .pond-page .frog { width: 230px; height: 230px; margin-left: -115px; top: 20px; }
+  .pond-page .frog svg { width: 100%; height: 100%; }
+  .pad--b { top: 190px; }
+  .ripple--b { top: 230px; }
+
+  .log-split { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+  .cal__day { min-height: 56px; }
+
+  .settings-page, .semesters, .data-page, .favs-page { max-width: 720px; }
+
+  .sheet-backdrop { align-items: center; }
+  .sheet { border-radius: 28px; border: 2.5px solid var(--ink); max-height: 90vh; }
+
+  .tut-practice { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+  .tut-practice .pond { height: 280px; }
+  .tut-practice .frog { width: 210px; height: 210px; margin-left: -105px; top: 24px; }
+  .tut-practice .frog svg { width: 100%; height: 100%; }
+  .tutorial--hello .tut-guide, .tutorial--done .tut-guide, .tutorial--name .tut-guide { max-width: 560px; }
+  .tutorial:not(.tutorial--practice) { max-width: 640px; margin: 0 auto; width: 100%; }
+}
+.field__label { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 2px; }

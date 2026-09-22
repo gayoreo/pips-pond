@@ -1,7 +1,8 @@
 import { addEntry, updateEntry, deleteEntry, getSettings, getEntries, getFavorites, getProfile } from '../data/db.js';
 import { budget, exchangeAllowedOn } from '../core/calc.js';
 import { todayKey, formatShort, formatTime, toKey } from '../core/dates.js';
-import { startEating } from '../pip/mood.js';
+import { startReaction } from '../pip/mood.js';
+import { play } from '../ui/sound.js';
 import { esc, money, plural } from '../ui/dom.js';
 import { toast } from '../ui/toast.js';
 
@@ -18,10 +19,20 @@ export function describe(type, n) {
   if (type === 'exchange') return plural(n, 'exchange');
   if (type === 'adjust-points') return `balance fix ${n > 0 ? '+' : '−'}${money(Math.abs(n))}`;
   if (type === 'adjust-swipes') return `balance fix ${n > 0 ? '+' : '−'}${plural(Math.abs(n), 'swipe')}`;
+  if (type === 'fund-points') return `added ${money(n)} points`;
+  if (type === 'fund-swipes') return `added ${plural(n, 'swipe')}`;
+  if (type === 'guest') return plural(n, 'guest pass').replace('passs', 'passes');
   return String(n);
 }
 
 const overLimitMsg = (limit) => `That's past your ${limit} exchanges this week. Log it anyway?`;
+
+// Frog reaction + sound after logging. Spending more than a whole day's points = shocked.
+function react(type, amount, b) {
+  const big = type === 'points' && b.points.daily > 0 && amount > b.points.daily;
+  startReaction(big ? 'shocked' : 'eating', big ? 2200 : 1300);
+  play(big ? 'whoa' : type === 'exchange' ? 'stamp' : 'chomp');
+}
 
 export async function quickLog({ type, amount = 1, label } = {}) {
   const settings = await getSettings();
@@ -34,7 +45,9 @@ export async function quickLog({ type, amount = 1, label } = {}) {
     if (!b.exchanges.allowedToday) return toast('Exchanges aren’t available today.');
     if (b.exchanges.used + amount > b.exchanges.limit && !confirm(overLimitMsg(b.exchanges.limit))) return;
   }
-  startEating();
+  if (type === 'guest' && b.guests.left - amount < 0 &&
+      !confirm(`That's more than your ${b.guests.total} guest passes. Log it anyway?`)) return;
+  react(type, amount, b);
   await addEntry({ type, amount, date: today });
   toast(`${frogName} ate ${label ?? describe(type, amount)}!`);
 }
@@ -208,7 +221,7 @@ export async function openFeedSheet({ type = 'points', entry = null, date = null
       toast('Entry updated.');
       return;
     }
-    startEating();
+    react(state.type, n, b);
     await addEntry({ type: state.type, amount: n, date: day });
     toast(`${frogName} ate ${describe(state.type, n)}!`);
   }
@@ -261,4 +274,23 @@ export async function openFeedSheet({ type = 'points', entry = null, date = null
   document.addEventListener('keydown', onKey);
   update();
   sheet.focus();
+}
+// Links like ?log=swipe, ?log=points&amount=5.45 or ?fav=Latte (for iPhone Shortcuts / Back Tap).
+export async function runShortcut(params) {
+  const settings = await getSettings();
+  if (!settings) return toast('Set up your semester first!');
+  const fav = params.get('fav');
+  if (fav) {
+    const f = (await getFavorites()).find((x) => x.name.toLowerCase() === fav.toLowerCase());
+    if (!f) return toast(`No favorite called “${fav}”.`);
+    return quickLog({ type: f.type, amount: f.amount, label: `${f.name} (${describe(f.type, f.amount)})` });
+  }
+  const type = params.get('log');
+  if (type === 'points') {
+    const amount = Number(params.get('amount'));
+    if (amount > 0) return quickLog({ type: 'points', amount: Math.round(amount * 100) / 100 });
+    return openFeedSheet({ type: 'points' });
+  }
+  if (['swipe', 'exchange', 'guest'].includes(type)) return quickLog({ type, amount: 1 });
+  return undefined;
 }

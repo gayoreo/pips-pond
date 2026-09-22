@@ -2,7 +2,9 @@ import { renderPond } from './views/pond.js';
 import { renderLog } from './views/log.js';
 import { renderSettings } from './views/settings.js';
 import { renderFavorites } from './views/favorites.js';
-import { renderTutorial } from './views/tutorial.js';
+import { renderTutorial, renderSetup } from './views/tutorial.js';
+import { renderSemesters } from './views/semesters.js';
+import { renderData } from './views/data.js';
 import { CHANGE_EVENT } from './data/db.js';
 
 // tab: in bottom bar · live: re-render on data change · bare: full screen, no tab bar
@@ -11,7 +13,10 @@ const routes = {
   '#/log':       { label: 'Log',       render: renderLog,       tab: true, live: true },
   '#/settings':  { label: 'Settings',  render: renderSettings,  tab: true },
   '#/favorites': { label: 'Favorites', render: renderFavorites, live: true },
+  '#/semesters': { label: 'Semesters', render: renderSemesters, live: true },
+  '#/data':      { label: 'Your data', render: renderData },
   '#/welcome':   { label: 'Welcome',   render: renderTutorial,  bare: true },
+  '#/setup':     { label: 'New semester', render: renderSetup,  bare: true },
 };
 const DEFAULT = '#/pond';
 
@@ -26,7 +31,7 @@ function renderTabs(active) {
   if (bare) return;
   const tabRoutes = Object.entries(routes).filter(([, r]) => r.tab);
   tabs.style.setProperty('--tab-count', tabRoutes.length);
-  tabs.innerHTML = tabRoutes
+  tabs.innerHTML = '<span class="tabs__brand" aria-hidden="true">Pip’s Pond</span>' + tabRoutes
     .map(([hash, r]) => `<a href="${hash}"${hash === active ? ' aria-current="page"' : ''}>${r.label}</a>`)
     .join('');
 }

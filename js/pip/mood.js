@@ -1,7 +1,7 @@
 import { CHANGE_EVENT } from '../data/db.js';
 
 export const MOOD_LABEL = {
-  happy: 'happy', eating: 'nom nom', worried: 'worried', sad: 'sad', sleeping: 'napping',
+  happy: 'happy', eating: 'nom nom', worried: 'worried', sad: 'sad', sleeping: 'napping', shocked: 'whoa!',
 };
 
 export function moodFor(b) {
@@ -17,11 +17,14 @@ export function moodFor(b) {
   return 'happy';
 }
 
-let eatingUntil = 0;
+// A short reaction after you log something: 'eating' normally, 'shocked' for a big purchase.
+let reaction = { mood: null, until: 0 };
 
-export function startEating(ms = 1300) {
-  eatingUntil = Date.now() + ms;
+export function startReaction(mood = 'eating', ms = 1300) {
+  reaction = { mood, until: Date.now() + ms };
   setTimeout(() => window.dispatchEvent(new Event(CHANGE_EVENT)), ms + 50);
 }
 
-export const isEating = () => Date.now() < eatingUntil;
+export const startEating = (ms = 1300) => startReaction('eating', ms);
+export const reactionMood = () => (Date.now() < reaction.until ? reaction.mood : null);
+export const isEating = () => reactionMood() !== null;

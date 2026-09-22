@@ -1,5 +1,5 @@
 // Bump VERSION whenever you add, rename or remove files.
-const VERSION = 'v1';
+const VERSION = 'v2';
 const CACHE = `pips-pond-${VERSION}`;
 const FONT_CACHE = 'pips-pond-fonts';
 
@@ -7,12 +7,12 @@ const SHELL = [
   './', './index.html', './manifest.json',
   './css/tokens.css', './css/base.css', './css/components.css',
   './js/main.js', './js/router.js',
-  './js/core/dates.js', './js/core/calc.js',
-  './js/data/db.js',
+  './js/core/dates.js', './js/core/calc.js', './js/core/weights.js', './js/core/semester.js',
+  './js/data/db.js', './js/data/importExport.js',
   './js/pip/frog.js', './js/pip/mood.js', './js/pip/lines.js',
-  './js/ui/dom.js', './js/ui/toast.js',
-  './js/views/pond.js', './js/views/log.js', './js/views/feed.js',
-  './js/views/favorites.js', './js/views/settings.js', './js/views/tutorial.js',
+  './js/ui/dom.js', './js/ui/toast.js', './js/ui/info.js', './js/ui/sound.js', './js/ui/widgets.js', './js/ui/report.js',
+  './js/views/pond.js', './js/views/log.js', './js/views/feed.js', './js/views/favorites.js',
+  './js/views/settings.js', './js/views/tutorial.js', './js/views/semesters.js', './js/views/data.js',
   './assets/icons/icon-180.png', './assets/icons/icon-192.png', './assets/icons/icon-512.png',
 ];
 

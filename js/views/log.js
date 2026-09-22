@@ -36,7 +36,7 @@ function summary(list) {
 function entryTime(e) {
   if (e.time) return formatHM(e.time);
   if (e.createdAt && toKey(new Date(e.createdAt)) === e.date) return formatTime(e.createdAt);
-  return '—';
+  return '';
 }
 
 // Sort key so timed entries sit in order and untimed ones fall back to when they were logged.

@@ -1,5 +1,5 @@
 // Bump VERSION whenever you add, rename or remove files.
-const VERSION = 'v5';
+const VERSION = 'v6';
 const CACHE = `pips-pond-${VERSION}`;
 const FONT_CACHE = 'pips-pond-fonts';
 const LIB_CACHE = 'pips-pond-libs';
@@ -16,9 +16,10 @@ const SHELL = [
   './js/ui/lock.js', './js/ui/status.js',
   './js/views/pond.js', './js/views/log.js', './js/views/feed.js', './js/views/favorites.js',
   './js/views/settings.js', './js/views/tutorial.js', './js/views/semesters.js', './js/views/data.js',
-  './js/views/login.js', './js/views/signup.js', './js/views/friends.js', './js/views/addFriend.js',
+  './js/views/login.js', './js/views/signup.js', './js/views/friends.js', './js/views/addFriend.js', './js/views/study.js',
   './assets/icons/icon-180.png', './assets/icons/icon-192.png', './assets/icons/icon-512.png',
   './assets/sounds/ribbit.mp3', './assets/sounds/splash.mp3', './assets/sounds/chorus.mp3',
+  './js/data/study.js',
 ];
 
 self.addEventListener('install', (event) => {

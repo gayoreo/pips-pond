@@ -15,7 +15,7 @@ function wireUsernameCheck(input, note, { allowEmpty = false } = {}) {
   const check = async () => {
     const name = input.value.trim().toLowerCase();
     input.value = name;
-    if (!name) { note.textContent = allowEmpty ? 'Optional — friends use this to find you.' : ''; note.className = 'field-note'; input.dataset.ok = allowEmpty ? '1' : ''; return; }
+    if (!name) { note.textContent = allowEmpty ? 'Optional. Friends use this to find you.' : ''; note.className = 'field-note'; input.dataset.ok = allowEmpty ? '1' : ''; return; }
     if (!USERNAME_RE.test(name)) {
       note.textContent = '3–20 letters, numbers or _.';
       note.className = 'field-note is-bad';
@@ -58,7 +58,7 @@ export async function renderSignup(root) {
         <label class="field">Username <span class="muted">(optional)</span>
           <input name="username" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="e.g. sam_frog">
         </label>
-        <p class="field-note" data-user-note>Optional — friends use this to find you.</p>
+        <p class="field-note" data-user-note>Optional. Friends use this to find you.</p>
         <label class="field">Email<input type="email" name="email" autocomplete="email" autocapitalize="none" required></label>
         <label class="field">Password<input type="password" name="password" autocomplete="new-password" minlength="8" required></label>
         <p class="card__hint">At least 8 characters.</p>
@@ -88,7 +88,7 @@ export async function renderSignup(root) {
     if (!email.includes('@')) return showError(root, 'Enter a valid email.');
     if (password.length < 8) return showError(root, 'Use a password of at least 8 characters.');
     if (username && !USERNAME_RE.test(username)) return showError(root, 'Username: 3–20 letters, numbers or _.');
-    if (username && form.username.dataset.ok !== '1') return showError(root, 'That username is taken — pick another.');
+    if (username && form.username.dataset.ok !== '1') return showError(root, 'That username is taken. Pick another one.');
 
     // Save the names on this device now, so they're there whether or not email confirmation is on.
     await saveProfile({ nickname, frogName });
@@ -116,7 +116,7 @@ function renderCheckEmail(root, email) {
     <section class="card auth__card stack">
       <h1 class="page-title">Check your email</h1>
       <p>We sent a confirmation link to <b>${esc(email)}</b>. Open it in this same browser or app, then you’re in.</p>
-      <p class="card__hint">No email after a minute? Check spam, or try signing in — it may already be active.</p>
+      <p class="card__hint">No email after a minute? Check spam, or try signing in. Your account may already be active.</p>
       <a class="btn-sketch btn-sketch--go" href="#/login">Go to sign in</a>
     </section>
   </div>`;
@@ -131,14 +131,14 @@ export async function renderFinishAccount(root) {
   const local = await getProfile();
   root.innerHTML = `
   <div class="auth">
-    ${authHero('happy', 'One more thing — pick a name friends can find you by.')}
+    ${authHero('happy', 'One more thing. Pick a name friends can find you by.')}
     <section class="card auth__card">
       <h1 class="page-title">Finish your account</h1>
       <form id="finish-form" class="stack" novalidate>
         <label class="field">Username <span class="muted">(optional)</span>
           <input name="username" autocomplete="off" autocapitalize="none" spellcheck="false" value="${esc(profile?.username ?? '')}" placeholder="e.g. sam_frog">
         </label>
-        <p class="field-note" data-user-note>Optional — friends use this to find you.</p>
+        <p class="field-note" data-user-note>Optional. Friends use this to find you.</p>
         <label class="row"><span>Also set a password (so you can sign in without Google)</span>
           <input type="checkbox" class="switch" data-want-pw></label>
         <label class="field" data-pw hidden>Password<input type="password" name="password" autocomplete="new-password" minlength="8"></label>
@@ -167,7 +167,7 @@ export async function renderFinishAccount(root) {
     const wantPw = root.querySelector('[data-want-pw]').checked;
     const password = form.password.value;
     if (username && !USERNAME_RE.test(username)) return showError(root, 'Username: 3–20 letters, numbers or _.');
-    if (username && form.username.dataset.ok !== '1') return showError(root, 'That username is taken — pick another.');
+    if (username && form.username.dataset.ok !== '1') return showError(root, 'That username is taken. Pick another one.');
     if (wantPw && password.length < 8) return showError(root, 'Use a password of at least 8 characters.');
     try {
       await busy(form.querySelector('[type="submit"]'), 'Saving…', async () => {

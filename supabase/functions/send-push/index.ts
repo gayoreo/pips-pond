@@ -120,7 +120,7 @@ function due(row: Row): { msg: Message; mark: Record<string, string> }[] {
     const what = [overPoints ? `${money(-snap.pointsLeftWeek)} in points` : '', overSwipes ? swipes(-snap.swipesLeftWeek) : '']
       .filter(Boolean).join(' and ');
     out.push({
-      msg: { title: `${frog} is a little worried`, body: `You’re ${what} over this week. The rest of your days got re-balanced, so check today’s budget.`, tag: 'pace' },
+      msg: { title: `${frog} is a little worried`, body: `You’re ${what} over this week. Check today’s budget in the app.`, tag: 'pace' },
       mark: { pace: snap.weekStart },
     });
   }
@@ -132,7 +132,7 @@ function due(row: Row): { msg: Message; mark: Record<string, string> }[] {
       out.push({
         msg: {
           title: 'Finals mode is on!',
-          body: `${daysLeft} days left in ${sem.name}.${leftovers ? ` You have ${leftovers} to finish strong.` : ''}`,
+          body: `${daysLeft} days left in ${sem.name}.${leftovers ? ` You still have ${leftovers}.` : ''}`,
           tag: 'semester',
         },
         mark: { end14: sem.end },
@@ -146,8 +146,8 @@ function due(row: Row): { msg: Message; mark: Record<string, string> }[] {
         msg: {
           title: daysLeft === 0 ? 'Last day of the semester!' : `${daysLeft} day${daysLeft === 1 ? '' : 's'} left!`,
           body: loses
-            ? `${loses} won’t carry over. Use it or lose it. Treat yourself (and ${frog})!`
-            : leftovers ? `You have ${leftovers}, and it carries over. Nice planning!` : `You made it through ${sem.name}!`,
+            ? `${loses} won’t carry over, so spend it before it’s gone.`
+            : leftovers ? `You have ${leftovers} left, and it carries over to next semester.` : `You made it through ${sem.name}!`,
           tag: 'semester',
         },
         mark: { end3: sem.end },
@@ -176,9 +176,9 @@ async function runCron() {
 }
 
 const PING_TEXT: Record<string, (who: string, theirFrog: string, yourFrog: string) => Message> = {
-  snack: (who, theirFrog) => ({ title: `${who} sent ${theirFrog} a snack!`, body: `${theirFrog} is munching happily. Open the pond to say thanks.`, tag: 'friends' }),
-  cheer: (who) => ({ title: `${who} is cheering for you!`, body: 'Your pond friends believe in your budget.', tag: 'friends' }),
-  visit: (who, _theirFrog, yourFrog) => ({ title: `${yourFrog} is visiting!`, body: `${who}’s frog hopped over to your pond. Come say hi.`, tag: 'friends' }),
+  snack: (who, theirFrog) => ({ title: `${who} sent ${theirFrog} a snack!`, body: `${theirFrog} is munching away.`, tag: 'friends' }),
+  cheer: (who) => ({ title: `${who} is cheering for you!`, body: 'Open the app to see your pond.', tag: 'friends' }),
+  visit: (who, _theirFrog, yourFrog) => ({ title: `${yourFrog} is visiting!`, body: `${who}’s frog hopped over to your pond.`, tag: 'friends' }),
   dance: (who, theirFrog, yourFrog) => ({ title: `${yourFrog} did a silly dance!`, body: `${who}’s frog is dancing for ${theirFrog}.`, tag: 'friends' }),
 };
 

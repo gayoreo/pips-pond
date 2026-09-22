@@ -17,7 +17,7 @@ import { pushStatus, enablePush, disablePush, sendTestPush } from '../data/push.
 import { incomingCount, FRIENDS_EVENT } from '../data/social.js';
 
 const SYNC_TEXT = {
-  idle: 'Ready.', syncing: 'Syncing…', synced: 'All synced.', offline: 'Offline — will sync when you’re back.',
+  idle: 'Ready.', syncing: 'Syncing…', synced: 'All synced.', offline: 'Offline. It will sync when you’re back online.',
   error: 'Sync had trouble. It’ll retry.', 'signed-out': 'Signed out.',
 };
 const PUSH_TEXT = {
@@ -137,13 +137,13 @@ export async function renderSettings(root) {
     </section>
 
     <section class="card">
-      <h2 class="card__title">Notifications ${infoBtn('Gentle reminders from Pip: a daily nudge if you forget to log, a heads-up when you go over for the week, and a warning before the semester ends. Friend snacks and cheers come through here too.')}</h2>
+      <h2 class="card__title">Notifications ${infoBtn('Pip can remind you to log each day, tell you when you go over for the week, and warn you before the semester ends. Friend snacks and cheers show up here too.')}</h2>
       <div id="push-box">
         ${push === 'on' ? `
           <p class="card__hint">Reminders are on for this device.</p>
           <label class="row"><span>Daily nudge if I forget to log</span><input type="checkbox" class="switch" data-notify="nudge"${notify.nudge !== false ? ' checked' : ''}></label>
           <label class="field" id="nudge-time-row"${notify.nudge === false ? ' hidden' : ''}>Nudge me at<input type="time" id="nudge-time" value="${esc(notify.nudgeTime || '19:00')}"></label>
-          <label class="row"><span>Heads-up when I go over for the week</span><input type="checkbox" class="switch" data-notify="pace"${notify.pace !== false ? ' checked' : ''}></label>
+          <label class="row"><span>Tell me when I go over for the week</span><input type="checkbox" class="switch" data-notify="pace"${notify.pace !== false ? ' checked' : ''}></label>
           <label class="row"><span>Semester-ending reminders</span><input type="checkbox" class="switch" data-notify="semesterEnd"${notify.semesterEnd !== false ? ' checked' : ''}></label>
           <label class="row"><span>Friend snacks, cheers &amp; visits</span><input type="checkbox" class="switch" data-notify="friends"${notify.friends !== false ? ' checked' : ''}></label>
           <div class="row">
@@ -151,7 +151,7 @@ export async function renderSettings(root) {
             <button type="button" class="btn-plain btn-plain--muted" id="push-off">Turn off on this device</button>
           </div>
         ` : `
-          <p class="card__hint">${esc(PUSH_TEXT[push] || 'Get gentle reminders from Pip.')}</p>
+          <p class="card__hint">${esc(PUSH_TEXT[push] || 'Pip can remind you to log and warn you before you run low.')}</p>
           ${['off'].includes(push) ? '<button type="button" class="btn-sketch btn-sketch--go" id="push-on">Turn on reminders</button>' : ''}
         `}
       </div>
@@ -159,7 +159,7 @@ export async function renderSettings(root) {
 
     ${lockOk ? `
     <section class="card">
-      <h2 class="card__title">Face ID lock ${infoBtn('Locks the app on this device behind Face ID / Touch ID (or your device PIN). You stay signed in underneath, so it’s just a privacy screen — no password needed to get back in.')}</h2>
+      <h2 class="card__title">Face ID lock ${infoBtn('Locks the app on this device with Face ID, Touch ID or your device PIN. You stay signed in, so you won’t need your password to get back in.')}</h2>
       <label class="row"><span>Lock this device with Face ID</span><input type="checkbox" class="switch" id="lock-toggle"${lockOn ? ' checked' : ''}></label>
     </section>` : ''}
     ` : `

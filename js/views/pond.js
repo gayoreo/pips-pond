@@ -14,13 +14,15 @@ import { beginNewSemester } from './tutorial.js';
 import { render } from '../router.js';
 import { pingsNow, markPingsSeen, whoName, PINGS_EVENT, PING_KINDS } from '../data/social.js';
 import { cloudEnabled, userNow } from '../data/supabase.js';
+import { studyOverride } from '../data/study.js';
+import { studyPeekHTML } from './study.js';
 
 // One-time card nudging local-only users to make an account (for sync + friends + reminders).
 function signinNudgeHTML(profile) {
   if (!cloudEnabled || userNow() || profile.signinNudgeSeen) return '';
   return `
   <section class="signin-nudge" aria-label="Make an account">
-    <p class="hand">Want to sync to your computer, add pond friends, and get reminders?</p>
+    <p class="hand">Want your pond on your computer too? An account also gets you friends and reminders.</p>
     <div class="signin-nudge__row">
       <a class="btn-sketch btn-sketch--go" href="#/login">Make a free account</a>
       <button type="button" class="btn-plain btn-plain--muted" data-nudge-dismiss>maybe later</button>
@@ -144,7 +146,8 @@ export async function renderPond(root) {
   const name = profile.frogName;
   const today = todayKey();
   const b = budget(settings, entries, today);
-  const baseMood = moodFor(b);
+  const school = studyOverride(profile, moodFor(b), today);
+  const baseMood = school?.mood ?? moodFor(b);
   const mood = reactionMood() ?? baseMood;
   const streak = b.phase === 'during' ? streakDays(settings, entries, today) : 0;
   const movingIn = sessionStorage.getItem('pond:movein') === '1';
@@ -152,7 +155,7 @@ export async function renderPond(root) {
 
   const line = movingIn
     ? `Welcome home${profile.nickname ? `, ${profile.nickname}` : ''}! This is our pond now.`
-    : pipLine(mood, b, {
+    : school?.line ?? pipLine(mood, b, {
         seed: entries.length + Number(today.slice(-2)),
         nick: profile.nickname,
         streak,
@@ -180,6 +183,7 @@ export async function renderPond(root) {
         <p class="pip-says" aria-live="polite">“${esc(line)}”</p>
       </section>
       ${pingsHTML()}
+      ${studyPeekHTML(today)}
       ${signinNudgeHTML(profile)}
       ${recapHTML(settings, entries, b, profile)}
       ${finalsHTML(b)}

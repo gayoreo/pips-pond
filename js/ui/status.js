@@ -38,9 +38,9 @@ function hide() {
 function apply() {
   clearTimeout(showSyncTimer);
   const signedIn = Boolean(userNow());
-  if (!navigator.onLine && signedIn) return paint('offline', 'Offline — changes saved here');
+  if (!navigator.onLine && signedIn) return paint('offline', 'Offline. Changes are saved here.');
   switch (syncState.status) {
-    case 'offline': return signedIn ? paint('offline', 'Offline — changes saved here') : hide();
+    case 'offline': return signedIn ? paint('offline', 'Offline. Changes are saved here.') : hide();
     case 'error': return paint('error', 'Sync will retry');
     case 'syncing':
       // Don't flash for quick syncs — only show if it takes a moment.

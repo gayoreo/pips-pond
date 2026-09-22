@@ -8,6 +8,7 @@ import { renderData } from './views/data.js';
 import { renderLogin, renderResetPassword, renderMerge } from './views/login.js';
 import { renderSignup, renderFinishAccount } from './views/signup.js';
 import { renderFriends } from './views/friends.js';
+import { renderStudy } from './views/study.js';
 import { CHANGE_EVENT } from './data/db.js';
 import { mayUseApp } from './data/auth.js';
 
@@ -15,6 +16,7 @@ import { mayUseApp } from './data/auth.js';
 const routes = {
   '#/pond':      { label: 'Pond',      render: renderPond,      tab: true, live: true },
   '#/log':       { label: 'Log',       render: renderLog,       tab: true, live: true },
+  '#/study':     { label: 'Study',     render: renderStudy,     tab: true, live: true },
   '#/settings':  { label: 'Settings',  render: renderSettings,  tab: true },
   '#/favorites': { label: 'Favorites', render: renderFavorites, live: true },
   '#/semesters': { label: 'Semesters', render: renderSemesters, live: true },

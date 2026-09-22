@@ -32,7 +32,7 @@ function friendCard(f) {
     </div>
     <div class="friend__acts">
       ${Object.entries(PING_KINDS).map(([k, v]) =>
-        `<button type="button" class="ping-btn" data-ping="${k}" data-id="${esc(f.id)}" title="${v.verb}" aria-label="${v.verb} — ${esc(whoName(f))}">${PING_EMOJI[k]}</button>`).join('')}
+        `<button type="button" class="ping-btn" data-ping="${k}" data-id="${esc(f.id)}" title="${v.verb}" aria-label="${v.verb}: ${esc(whoName(f))}">${PING_EMOJI[k]}</button>`).join('')}
       <button type="button" class="btn-plain btn-plain--muted" data-remove="${esc(f.id)}" aria-label="Remove ${esc(whoName(f))}">✕</button>
     </div>
   </li>`;
@@ -99,7 +99,7 @@ export async function renderFriends(root) {
       <h2 class="card__title">Your pond friends ${friends.length ? `<span class="muted">(${friends.length})</span>` : ''}</h2>
       ${friends.length
         ? `<ul class="friends">${friends.map(friendCard).join('')}</ul>
-           <p class="card__hint">Friends see your frog’s name and mood — nothing else. Send a treat with the buttons!</p>`
+           <p class="card__hint">Friends only see your frog’s name and mood.</p>`
         : '<p class="card__hint">No friends yet. Share your code or invite link above!</p>'}
     </section>
 
@@ -131,7 +131,7 @@ export async function renderFriends(root) {
     const copy = e.target.closest('[data-copy]');
     if (copy) {
       try { await navigator.clipboard.writeText(copy.dataset.copy); toast('Copied!'); }
-      catch { toast('Couldn’t copy — press and hold to copy it.'); }
+      catch { toast('Couldn’t copy. Press and hold to copy it.'); }
       return;
     }
     const share = e.target.closest('[data-share]');

@@ -8,7 +8,7 @@ import { todayKey } from '../core/dates.js';
 import { moodFor } from '../pip/mood.js';
 
 export const SYNC_EVENT = 'pond:sync';
-const PARTS = { settings: 'settings', favorites: 'favorites', archive: 'archive', prefs: 'profile' };
+const PARTS = { settings: 'settings', favorites: 'favorites', archive: 'archive', prefs: 'profile', study: 'study' };
 const pullKey = (uid) => `pips-pond:pulled:${uid}`;
 const PUBLISHED_KEY = 'pips-pond:published';
 

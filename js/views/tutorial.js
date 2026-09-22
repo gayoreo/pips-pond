@@ -260,7 +260,7 @@ function extrasHTML(d) {
     </section>
     <section class="card">
       <h2 class="card__title">Reminders <span class="muted">(optional)</span></h2>
-      <p class="card__hint">Once you make an account, Pip can send a gentle daily nudge, a heads-up when you go over for the week, and a warning before the semester ends. Turn these on any time in <b>Settings → Notifications</b>.</p>
+      <p class="card__hint">With an account, Pip can remind you to log, tell you when you go over for the week, and warn you before the semester ends. Turn them on in <b>Settings → Notifications</b>.</p>
     </section>
     ${started ? `
     <section class="card card--sticky">
@@ -287,7 +287,7 @@ function nameHTML(d) {
     ${field('What should I call you?', `<input name="nickname" maxlength="24" autocomplete="nickname" value="${esc(d.nickname)}">`)}
     ${field('What’s my name?', `<input name="frogName" maxlength="24" autocomplete="off" value="${esc(d.frogName)}">`)}
     <section class="card">
-      <p class="card__hint">💡 Once you’re in, make a free account in <b>Settings</b> to sync between your phone and computer, add <b>pond friends</b>, and turn on gentle <b>reminders</b>.</p>
+      <p class="card__hint">Later you can make a free account in <b>Settings</b>. It syncs your phone and computer, and lets you add <b>pond friends</b> and turn on <b>reminders</b>.</p>
     </section>
   </div>`;
 }

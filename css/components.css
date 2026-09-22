@@ -777,3 +777,84 @@ body.is-locked { overflow: hidden; }
 @media (prefers-reduced-motion: reduce) {
   .frog--visitor, .frog.is-dancing svg, .netchip__spin, .ping-btn.is-sent { animation: none; }
 }
+
+/* ==================== Study planner ==================== */
+.study__head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.study__pip { margin: 0; font-family: var(--font-hand); font-size: 21px; font-weight: 700; line-height: 1.15; }
+.study__tools { display: flex; gap: 14px; }
+.course-chips { gap: 6px; }
+.course-chip {
+  min-height: 36px; padding: 0 12px; border: 2px solid var(--ink); border-radius: 999px;
+  background: var(--card); font-family: var(--font-body); font-weight: 700; font-size: 14px;
+}
+.course-chip[style] { background: var(--course); }
+.course-chip[aria-pressed="true"] { border-width: 3px; box-shadow: 2px 2px 0 var(--ink); }
+
+.plan-group { display: flex; flex-direction: column; gap: 6px; }
+.plan-group__title { margin: 4px 0 0; font-family: var(--font-hand); font-size: 22px; }
+.plan-group--late .plan-group__title { color: var(--coral); }
+.tasks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.task {
+  display: flex; align-items: stretch; background: var(--card);
+  border: 2px solid var(--ink); border-left: 10px solid var(--course); border-radius: 12px 6px 12px 6px;
+}
+.task__check {
+  flex: none; width: 48px; border: none; background: none; display: grid; place-items: center; cursor: pointer;
+}
+.task__check::before {
+  content: ""; width: 22px; height: 22px; border: 2.5px solid var(--ink); border-radius: 7px 4px 7px 4px; background: var(--paper);
+}
+.task.is-done .task__check::before { background: var(--green-fill) center / 16px no-repeat
+  url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 8.5l3 3 7-7' fill='none' stroke='%231F2A1C' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
+.task__body {
+  flex: 1; min-width: 0; padding: 8px 10px 8px 0; border: none; background: none; text-align: left; cursor: pointer;
+  display: flex; flex-direction: column; gap: 2px; color: var(--ink);
+}
+.task__title { font-weight: 800; font-size: 16px; overflow-wrap: anywhere; }
+.task__meta { font-size: 13px; color: var(--ink-2); }
+.task__meta .is-late, .study-peek .is-late { color: var(--coral); font-weight: 700; }
+.task.is-done .task__title { text-decoration: line-through; color: var(--ink-2); }
+.task--exam .task__title::after { content: " ★"; color: var(--points-ring); }
+.study-clear { text-align: center; }
+
+/* sheets */
+.study-sheet__body { display: flex; flex-direction: column; gap: 12px; }
+.study-sheet .type-pills button { font-size: 17px; }
+.checklist-edit { display: flex; flex-direction: column; gap: 8px; }
+.checklist-edit > .field { margin: 0; }
+.checklist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 240px; overflow: auto; }
+.checklist li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.checklist label { display: flex; align-items: center; gap: 10px; min-height: 36px; flex: 1; }
+.checklist input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--green); }
+.checklist__del { width: 36px; height: 36px; border: none; background: none; color: var(--coral); font-size: 15px; }
+.checklist__add { display: flex; gap: 8px; align-items: flex-start; }
+.checklist__add textarea, .study-notes {
+  flex: 1; width: 100%; min-height: 42px; padding: 9px 10px; resize: vertical;
+  border: 2px solid var(--ink); border-radius: 10px 4px 10px 4px; background: var(--card);
+  font-family: var(--font-body); font-size: 15px; color: var(--ink);
+}
+.checklist__range { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 15px; }
+.checklist__range input {
+  width: 64px; min-height: 38px; padding: 0 8px; border: 2px solid var(--ink); border-radius: 8px;
+  background: var(--card); font-size: 15px;
+}
+.course-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.course-row { display: flex; align-items: center; gap: 10px; }
+.course-row input {
+  flex: 1; min-width: 0; min-height: 42px; padding: 0 10px; border: 2px solid var(--ink); border-radius: 10px 4px 10px 4px;
+  background: var(--card); font-size: 16px; font-weight: 700;
+}
+.course-swatch { flex: none; width: 34px; height: 34px; border: 2.5px solid var(--ink); border-radius: 50%; cursor: pointer; }
+.course-add { display: flex; align-items: flex-end; gap: 10px; }
+
+/* "Coming up" on the Pond */
+.study-peek {
+  background: var(--blue-note); border: 2px solid var(--ink); border-radius: var(--wobble-3);
+  padding: 10px 14px; transform: rotate(0.4deg);
+}
+.study-peek__head { display: flex; align-items: center; justify-content: space-between; }
+.study-peek__title { margin: 0; font-family: var(--font-hand); font-size: 21px; font-weight: 700; }
+.study-peek ul { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.study-peek li { display: flex; justify-content: space-between; gap: 10px; font-size: 15px; }
+.study-peek li span:first-child { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.study-peek li span:last-child { flex: none; }

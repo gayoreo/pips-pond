@@ -3,6 +3,8 @@
 A meal plan tracker (swipes + retail points) with a frog who keeps you on pace.
 Plain HTML/CSS/JS, no build step. Works offline and installs to your home screen.
 
+**Live app:** https://gayoreo.github.io/pips-pond/
+
 ## Run locally
 Open the folder in VS Code → right-click `index.html` → **Open with Live Server**.
 

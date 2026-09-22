@@ -1,5 +1,5 @@
 // Bump VERSION whenever you add, rename or remove files.
-const VERSION = 'v9';
+const VERSION = 'v10';
 const CACHE = `pips-pond-${VERSION}`;
 const FONT_CACHE = 'pips-pond-fonts';
 const LIB_CACHE = 'pips-pond-libs';

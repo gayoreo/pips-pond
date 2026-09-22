@@ -1064,6 +1064,20 @@ body.is-locked { overflow: hidden; }
 .grade-row--scale input[data-s="letter"] { flex: 0 0 48px; }
 .grade-row--scale input[data-s="min"] { flex: 0 0 60px; }
 
+/* Subcategories (e.g. Lab / Lecture split further) inside grade setup */
+.grade-row-group { display: flex; flex-direction: column; gap: 6px; padding-bottom: 6px; border-bottom: 1px dashed var(--tape); }
+.grade-row-group:last-child { border-bottom: none; }
+.grade-row__subs { padding-left: 18px; gap: 6px; }
+.grade-row--sub { border-left: 2px solid var(--tape); padding-left: 8px; }
+.grade-row__sub-hint { padding-left: 18px; margin: 0; font-size: 12px; }
+.btn-plain--small { min-height: 32px; font-size: 15px; padding: 0 4px 0 18px; }
+
+/* Nested subcategory cards on the course page (Lab / Lecture etc.) */
+.grade-cat--group > .grade-items { display: none; } /* a group card never shows items directly */
+.grade-cat__nested { margin-top: 6px; padding: 8px 10px; border: 1.5px dashed var(--tape); border-radius: var(--wobble-2); }
+.grade-cat__nested + .grade-cat__nested { margin-top: 10px; }
+.grade-cat__sub-title { margin: 0; font-family: var(--font-hand); font-size: 18px; font-weight: 700; }
+
 /* ==================== Dining ==================== */
 .dn-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 .dn-place.is-fav { border-width: 3px; }

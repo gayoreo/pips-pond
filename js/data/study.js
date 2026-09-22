@@ -7,7 +7,7 @@ import { cardsDueMap } from './decks.js';
 export const TASK_TYPES = {
   homework:   { label: 'Homework' },
   assignment: { label: 'Assignment' },
-  quiz:       { label: 'Quiz'},
+  quiz:       { label: 'Quiz' },
   exam:       { label: 'Exam' },
   reading:    { label: 'Reading' },
 };
@@ -126,18 +126,47 @@ export const deleteCourse = (id) => change((s) => {
 });
 
 // ---------- grades ----------
-// course.grading = { mode, categories: [{ id, name, weight, drop, bonus }], scale, credits, passFail, passMin, replaceLowest, examCat }
+// course.grading = { mode, categories: [{ id, name, weight, drop, bonus, subs?: [{ id, name, weight, drop, bonus }] }],
+//                     scale, credits, passFail, passMin, replaceLowest, examCat }
+// A category with subs is a container (name + weight only, no items of its own); a category with no
+// subs is a leaf, same as before. `examCat` and every grade item's `catId` always point at a leaf.
 // course.grades  = [{ id, name, catId, earned, possible, status: 'graded'|'pending'|'excused', extra, isFinal, taskId }]
 // course.extras  = [{ id, kind: 'points'|'percent', amount, note }]
 const findCourse = (s, id) => s.courses.find((c) => c.id === id);
 
+// A brand-new category/sub row gets a "tmp..." placeholder id in the grade-setup sheet (see
+// course.js) so its exam-cat <option> and remove handlers have something stable to key on before
+// it's ever saved. Swap those for a real id here; remap tracks old -> new so callers (grade items'
+// catId, examCat) can follow along. Anything else (an existing saved id) is left untouched.
+const cleanCats = (list, remap) => (list ?? []).map((x) => {
+  const id = x.id && !x.id.startsWith('tmp') ? x.id : newId();
+  if (x.id && id !== x.id) remap.set(x.id, id);
+  const subs = x.subs?.length ? cleanCats(x.subs, remap) : undefined;
+  const base = { id, name: (x.name || '').trim() || 'Category', weight: x.weight, bonus: x.bonus };
+  return subs ? { ...base, subs } : { ...base, drop: x.drop };
+});
+
+const leafIds = (list) => {
+  const out = [];
+  const walk = (l) => { for (const c of l) { if (c.subs?.length) walk(c.subs); else out.push(c.id); } };
+  walk(list);
+  return out;
+};
+
 export const saveGrading = (courseId, grading) => change((s) => {
   const c = findCourse(s, courseId);
   if (!c) return;
-  const cats = (grading.categories ?? []).map((x) => ({ ...x, id: x.id || newId(), name: (x.name || '').trim() || 'Category' }));
-  c.grading = { ...(c.grading ?? {}), ...grading, categories: cats };
-  const ids = new Set(cats.map((x) => x.id));
-  for (const it of c.grades ?? []) if (!ids.has(it.catId)) it.catId = cats[0]?.id ?? '';
+  const remap = new Map();
+  const cats = cleanCats(grading.categories, remap);
+  const examCat = remap.get(grading.examCat) ?? grading.examCat;
+  c.grading = { ...(c.grading ?? {}), ...grading, categories: cats, examCat };
+  const ids = new Set(leafIds(cats));
+  const fallback = leafIds(cats)[0] ?? '';
+  for (const it of c.grades ?? []) {
+    if (remap.has(it.catId)) it.catId = remap.get(it.catId);
+    if (!ids.has(it.catId)) it.catId = fallback;
+  }
+  if (c.grading.examCat && !ids.has(c.grading.examCat)) c.grading.examCat = '';
 });
 
 export const saveGradeItem = (courseId, item) => change((s) => {
@@ -454,7 +483,7 @@ export function guessTaskType(title) {
   const homeworky = /\b(hw|homework|problem set|pset|p\.?set|worksheet|exercises?|webwork)\b/i.test(title);
   if (/\b(exam|midterm|final|test)\b/i.test(title)) return 'exam';
   if (/\bread(ing)?\b/i.test(title)) return 'reading';
-  if (homeworky) return 'homework'; // "CH 3 HW Quiz" is homework, not an exam
+  if (homeworky) return 'homework'; // "CH 3 HW Quiz" is homework, not a quiz or exam
   if (/\bquiz(zes)?\b/i.test(title)) return 'quiz';
   if (/\b(chapter|ch\.?\s*\d|pages?|pp\.)/i.test(title)) return 'reading';
   return 'assignment';

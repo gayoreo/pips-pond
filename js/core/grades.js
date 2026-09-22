@@ -22,7 +22,7 @@ export const GRADE_TEMPLATES = {
       { name: 'Homework', weight: 20 }, { name: 'Quizzes', weight: 20 }, { name: 'Exams', weight: 60 },
     ],
   }),
-  points: () => ({ mode: 'points', categories: [{ name: 'Assignments' }, { name: 'Quizzes'}, { name: 'Exams' }] }),
+  points: () => ({ mode: 'points', categories: [{ name: 'Assignments' }, { name: 'Quizzes' }, { name: 'Exams' }] }),
 };
 
 export const DEFAULT_GRADING = {
@@ -36,8 +36,8 @@ const num = (v) => (v === '' || v === null || v === undefined || Number.isNaN(Nu
 const isGraded = (it) => it.status !== 'excused' && it.status !== 'pending' && num(it.earned) !== null && num(it.possible) > 0;
 const pctOf = (e, p) => (p > 0 ? e / p : 0);
 
-// Works out one category: returns { earned, possible, pct (0-1) or null, used: [items that counted], dropped: [ids] }.
-function categoryResult(cat, items, replacement) {
+// Works out one leaf category: returns { earned, possible, pct (0-1) or null, dropped: [ids] }.
+function leafResult(cat, items, replacement) {
   let list = items.filter(isGraded).map((it) => ({ id: it.id, earned: num(it.earned) + (num(it.extra) ?? 0), possible: num(it.possible), isFinal: Boolean(it.isFinal) }));
 
   // Final replaces the lowest exam in this category if it's higher.
@@ -64,8 +64,42 @@ function categoryResult(cat, items, replacement) {
   return { earned, possible, pct: possible > 0 ? earned / possible : null, dropped };
 }
 
+// Combines a set of sub-results into their parent's own { earned, possible, pct }.
+// Weighted: subs are weighted against each other (like top-level categories). Points: raw points add up.
+function combineSubs(mode, subs, results) {
+  const regular = subs.filter((c) => !c.bonus);
+  const bonus = subs.filter((c) => c.bonus);
+  if (mode === 'points') {
+    const earned = regular.reduce((s, c) => s + results[c.id].earned, 0) + bonus.reduce((s, c) => s + results[c.id].earned, 0);
+    const possible = regular.reduce((s, c) => s + results[c.id].possible, 0);
+    return { earned, possible, pct: possible > 0 ? earned / possible : null, dropped: [] };
+  }
+  const counted = regular.filter((c) => results[c.id].pct !== null && (num(c.weight) ?? 0) > 0);
+  const W = counted.reduce((s, c) => s + num(c.weight), 0);
+  if (!W) return { earned: 0, possible: 0, pct: null, dropped: [] };
+  let pct = counted.reduce((s, c) => s + num(c.weight) * results[c.id].pct, 0) / W;
+  pct += bonus.reduce((s, c) => s + (num(c.weight) ?? 0) * (results[c.id].pct ?? 0), 0) / W;
+  return { earned: 0, possible: 0, pct, dropped: [] };
+}
+
+// One category, leaf or with subs. `byCat(id)` looks up items for a leaf id. `into` collects every
+// leaf/sub result too, keyed by id, so the UI can show a subcategory's own progress.
+function catResult(cat, mode, byCat, replacement, into) {
+  const subs = cat.subs ?? [];
+  if (!subs.length) {
+    const r = leafResult(cat, byCat(cat.id), replacement);
+    into[cat.id] = r;
+    return r;
+  }
+  const subResults = {};
+  for (const sc of subs) subResults[sc.id] = catResult(sc, mode, byCat, replacement, into);
+  const r = { ...combineSubs(mode, subs, subResults), subs: subs.map((sc) => sc.id) };
+  into[cat.id] = r;
+  return r;
+}
+
 // The whole course. `override` = { itemId: earned } to try a score without saving it.
-// Returns { pct (0-100+) or null, letter, cats: { catId: result }, points }
+// Returns { pct (0-100+) or null, letter, cats: { catId: result } (every category and subcategory), points }
 export function courseGrade(course, override = {}) {
   const g = gradingOf(course);
   const items = (course.grades ?? []).map((it) => (it.id in override ? { ...it, earned: override[it.id], status: 'graded' } : it));
@@ -78,7 +112,7 @@ export function courseGrade(course, override = {}) {
   }
 
   const cats = {};
-  for (const c of g.categories) cats[c.id] = categoryResult(c, byCat(c.id), replacement);
+  for (const c of g.categories) catResult(c, g.mode, byCat, replacement, cats);
   const regular = g.categories.filter((c) => !c.bonus);
   const bonus = g.categories.filter((c) => c.bonus);
   const extras = course.extras ?? [];
@@ -102,6 +136,14 @@ export function courseGrade(course, override = {}) {
   }
   if (pct !== null) pct = Math.round(pct * 100) / 100;
   return { pct, letter: letterFor(pct, g), cats };
+}
+
+// Leaf categories only, in tree order — where items can actually attach, drop-lowest applies, and exams live.
+export function leafCategories(g) {
+  const out = [];
+  const walk = (list) => { for (const c of list) { if (c.subs?.length) walk(c.subs); else out.push(c); } };
+  walk(g.categories ?? []);
+  return out;
 }
 
 export function letterFor(pct, g) {

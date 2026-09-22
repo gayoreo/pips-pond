@@ -501,6 +501,7 @@ async function finish() {
   }
   sessionStorage.setItem('pond:movein', '1');
   play('ribbit');
+  play('splash');
   location.hash = '#/pond';
 }
 

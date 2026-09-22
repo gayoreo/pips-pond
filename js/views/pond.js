@@ -227,12 +227,13 @@ export async function renderPond(root) {
     if (frog) {
       pets += 1;
       frog.classList.remove('is-petted');
-      void frog.offsetWidth; // restart the hop animation
+      void frog.offsetWidth;
       frog.classList.add('is-petted');
       frog.insertAdjacentHTML('beforeend', '<svg class="heart" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-7-4.5-9.5-9A5.5 5.5 0 0 1 12 6a5.5 5.5 0 0 1 9.5 6C19 16.5 12 21 12 21z"/></svg>');
       setTimeout(() => frog.querySelector('.heart')?.remove(), 900);
-      says.textContent = `“${pick(PET, pets + Date.now() % 7, profile.nickname)}”`;
-      play('ribbit');
+      says.textContent = `"${pick(PET, pets + Date.now() % 7, profile.nickname)}"`;
+      play(pets === 1 ? 'splash' : 'ribbit');
+      if (pets === 10) play('chorus'); // easter egg: pet Pip 10 times in one visit
       return;
     }
     if (e.target.closest('[data-recap-ok]')) return saveProfile({ recapSeen: b.weekStart });

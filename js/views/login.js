@@ -187,7 +187,9 @@ export async function renderMerge(root) {
     if (!keep) return;
     if (keep === 'device' && !confirm('Replace the pond saved in your account with this device’s pond?')) return;
     resolveClaim(user.id, keep);
-    await busy(e.target.closest('button'), 'One sec…', () => Promise.race([syncNow(), new Promise((r) => setTimeout(r, 12000))]));
+    // Same reasoning as afterSignIn(): wait for the real sync rather than racing a timeout,
+    // so nextStop() doesn't route off of settings that haven't finished being pulled down yet.
+    await busy(e.target.closest('button'), 'One sec…', () => syncNow());
     location.hash = await nextStop(user);
   });
 }

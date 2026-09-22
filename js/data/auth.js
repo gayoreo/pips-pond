@@ -106,7 +106,10 @@ export async function afterSignIn(user) {
   setFlag(LOCAL_ONLY, null);
   const claim = await claimDevice(user);
   if (claim === 'choose') return '#/merge';
-  await Promise.race([syncNow(), new Promise((r) => setTimeout(r, 12000))]);
+  // Wait for the real pull to finish before deciding where to route — a race against a
+  // timeout here can send an existing account's data through before it's actually written
+  // locally, making nextStop() think there's no settings yet and show the tutorial.
+  await syncNow();
   return nextStop(user);
 }
 

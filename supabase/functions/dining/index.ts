@@ -108,6 +108,7 @@ function trimMenu(raw: unknown) {
         name: String(it.formalName ?? it.description ?? '').trim(),
         desc: it.description && it.description !== it.formalName ? String(it.description).slice(0, 160) : '',
         cal: String(it.calories ?? ''),
+        ing: String(it.ingredients ?? '').toLowerCase().replace(/\s+/g, ' ').slice(0, 300),
         vegan: yes(it.isVegan), veg: yes(it.isVegetarian), plant: yes(it.isPlantBased), mindful: yes(it.isMindful),
         allergens: (it.allergens ?? []).map((a: any) => String(typeof a === 'string' ? a : a?.name ?? a?.allergen ?? '')).filter(Boolean),
       })).filter((it: { name: string }) => it.name),

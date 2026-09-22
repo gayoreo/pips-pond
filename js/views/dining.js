@@ -10,7 +10,10 @@ import { toast } from '../ui/toast.js';
 import { openSheet } from '../ui/sheet.js';
 import { quickLog, openFeedSheet } from './feed.js';
 
-const ALLERGENS = ['Eggs', 'Fish', 'Gluten', 'Milk', 'Mustard', 'Peanut', 'Sesame', 'Shellfish', 'Soy', 'Sulphites', 'Treenuts', 'Wheat'];
+// The first twelve are the allergens the dining menus tag. Anything in BY_WORD isn't tagged,
+// so it's matched against the dish name and its ingredient list instead.
+const ALLERGENS = ['Eggs', 'Fish', 'Gluten', 'Milk', 'Mustard', 'Peanut', 'Sesame', 'Shellfish', 'Soy', 'Sulphites', 'Treenuts', 'Wheat', 'Quinoa'];
+const BY_WORD = { Quinoa: ['quinoa'] };
 const DIETS = { '': 'Anything', vegetarian: 'Vegetarian', vegan: 'Vegan', plant: 'Plant-based' };
 const view = { day: 0, open: new Set(), meal: {}, q: '', fetched: false };
 const nowHM = () => { const d = new Date(); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
@@ -22,8 +25,14 @@ function itemOk(it, p) {
   if (p.diet === 'vegetarian' && !(it.veg || it.vegan)) return false;
   if (p.diet === 'plant' && !(it.plant || it.vegan)) return false;
   if (p.avoid.length) {
+    const tagged = p.avoid.filter((a) => !BY_WORD[a]);
     const has = (it.allergens ?? []).map(norm);
-    if (p.avoid.some((a) => has.some((h) => h.startsWith(norm(a).slice(0, 4))))) return false;
+    if (tagged.some((a) => has.some((h) => h.startsWith(norm(a).slice(0, 4))))) return false;
+    const words = p.avoid.flatMap((a) => BY_WORD[a] ?? []);
+    if (words.length) {
+      const hay = `${it.name} ${it.desc ?? ''} ${it.ing ?? ''}`.toLowerCase();
+      if (words.some((w) => hay.includes(w))) return false;
+    }
   }
   return true;
 }
@@ -220,7 +229,7 @@ function openFilterSheet(p, done) {
     </div>
     <p class="field">Hide anything with</p>
     <div class="chip-row">${ALLERGENS.map((a) => `<label class="daychip"><input type="checkbox" value="${a}"${p.avoid.includes(a) ? ' checked' : ''}><span>${a}</span></label>`).join('')}</div>
-    <p class="card__hint">Saved for next time. Allergen info comes from the dining menus and can be incomplete.</p>
+    <p class="card__hint">Saved for next time. Allergen info comes from the dining menus and can be incomplete. Quinoa isn’t one of their tags, so it’s matched against the dish name and ingredients instead.</p>
     <button type="button" class="btn-sketch btn-sketch--go btn-sketch--big" data-save>Done</button>`;
   openSheet('Menu filters', html, (sheet, close) => {
     let diet = p.diet;

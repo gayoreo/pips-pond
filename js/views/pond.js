@@ -35,6 +35,7 @@ const PING_LINE = {
   cheer: (who) => `${who} is cheering you on! 📣`,
   visit: (who) => `${who}’s frog hopped over to say hi! 🐸`,
   dance: (who) => `${who}’s frog is doing a silly dance! 💃`,
+  study: (who, p) => `${who} wants to study together${p?.note ? ` ${p.note}` : ''}! 📖`,
 };
 
 function pingsHTML() {
@@ -42,7 +43,7 @@ function pingsHTML() {
   if (!pings.length) return '';
   return `
   <section class="pings" aria-label="Messages from friends">
-    ${pings.map((p) => `<p class="ping">${esc((PING_LINE[p.kind] ?? (() => 'A pond friend says hi!'))(whoName(p)))}</p>`).join('')}
+    ${pings.map((p) => `<p class="ping">${esc((PING_LINE[p.kind] ?? (() => 'A pond friend says hi!'))(whoName(p), p))}</p>`).join('')}
     <button type="button" class="btn-plain" data-pings-ok>aw, thanks!</button>
   </section>`;
 }

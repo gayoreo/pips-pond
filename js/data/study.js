@@ -25,6 +25,13 @@ export const DEFAULT_STUDY_NOTIFY = {
   pip: true,           // Pip's mood reacts to homework and exams
 };
 
+// The part of the day that counts for free time and "+ study" (you can change it in Study settings).
+export const DEFAULT_HOURS = { from: '08:00', to: '22:00' };
+export function studyHours(profile) {
+  const h = { ...DEFAULT_HOURS, ...(profile?.studyHours ?? {}) };
+  return h.to > h.from ? h : { ...DEFAULT_HOURS };
+}
+
 const blank = () => ({ courses: [], tasks: [], series: [], blocks: [] });
 
 function norm(s) {
@@ -79,7 +86,7 @@ export const saveCourse = ({ id, name, code = '', color, meetings = [] }, newTas
   }
   for (const t of newTasks) {
     s.tasks.push({
-      id: newId(), courseId: course.id, title: t.title.trim(), type: t.type, due: t.due, time: t.time || '',
+      id: newId(), courseId: course.id, title: t.title.trim(), type: t.type, due: t.due, time: t.time || '', end: t.end || '',
       done: false, doneAt: '', checklist: [], notes: '',
     });
   }
@@ -174,6 +181,29 @@ export const stopSeries = (seriesId) => change((s) => {
   s.tasks = s.tasks.filter((t) => !(t.seriesId === seriesId && !t.done && t.due >= today));
 });
 
+// Every copy of a weekly repeat (skipped ones included), by date.
+export const seriesTasks = (s, seriesId) => s.tasks.filter((t) => t.seriesId === seriesId).sort((a, b) => a.due.localeCompare(b.due));
+
+// Brings back a skipped copy of a weekly repeat.
+export const restoreTask = (id) => change((s) => {
+  const t = s.tasks.find((x) => x.id === id);
+  if (t) delete t.deleted;
+});
+
+// Changes a weekly repeat and its unfinished copies from `fromDue` on. Finished copies are left alone.
+export const updateSeries = (seriesId, patch, fromDue) => change((s) => {
+  const r = s.series.find((x) => x.id === seriesId);
+  if (r) {
+    for (const k of ['title', 'type', 'courseId', 'time']) if (k in patch) r[k] = patch[k];
+    if (patch.checklist) r.checklist = patch.checklist.map((i) => i.text);
+  }
+  for (const t of s.tasks) {
+    if (t.seriesId !== seriesId || t.done || t.due < fromDue) continue;
+    for (const k of ['title', 'type', 'courseId', 'time', 'end', 'notes']) if (k in patch) t[k] = patch[k];
+    if (patch.checklist) t.checklist = patch.checklist.map((i, n) => ({ id: `${t.id}:${n}`, text: i.text, done: false }));
+  }
+});
+
 // Adds upcoming copies of weekly repeats. Only saves when something new was added.
 export function ensureSeries() {
   const today = todayKey();
@@ -196,7 +226,8 @@ export function meetingsOn(s, day) {
 export const timeRange = (m) => (m.end ? `${formatHM(m.start)} to ${formatHM(m.end)}` : formatHM(m.start));
 
 // ---------- your own calendar blocks (work, appointments, study time, other) ----------
-// { id, kind, title, start: 'HH:MM', end: 'HH:MM', place, days: [0-6] for weekly, date: 'YYYY-MM-DD' for one-time, until }
+// { id, kind, title, start: 'HH:MM', end: 'HH:MM', place,
+//   weekly: days: [0-6], from, until    one-time: dates: ['YYYY-MM-DD', ...] (date = the first one) }
 export const BLOCK_KINDS = {
   study:       { label: 'Study time' },
   work:        { label: 'Work' },
@@ -205,10 +236,12 @@ export const BLOCK_KINDS = {
 };
 
 export const saveBlock = (b) => change((s) => {
+  const dates = b.weekly ? [] : [...new Set((b.dates?.length ? b.dates : [b.date]).filter(Boolean))].sort();
   const clean = {
     id: b.id || newId(), kind: BLOCK_KINDS[b.kind] ? b.kind : 'other', title: (b.title || '').trim(),
     start: b.start, end: b.end || '', place: (b.place || '').trim(),
-    days: b.weekly ? [...(b.days || [])].sort() : [], date: b.weekly ? '' : b.date, until: b.weekly ? (b.until || '') : '',
+    days: b.weekly ? [...(b.days || [])].sort() : [], from: b.weekly ? (b.from || '') : '', until: b.weekly ? (b.until || '') : '',
+    date: dates[0] || '', dates,
   };
   const i = s.blocks.findIndex((x) => x.id === clean.id);
   if (i >= 0) s.blocks[i] = clean; else s.blocks.push(clean);
@@ -217,17 +250,50 @@ export const saveBlock = (b) => change((s) => {
 
 export const deleteBlock = (id) => change((s) => { s.blocks = s.blocks.filter((b) => b.id !== id); });
 
-const blockOn = (b, day) => (b.days?.length ? b.days.includes(dayOfWeek(day)) && (!b.until || day <= b.until) : b.date === day);
+const blockOn = (b, day) => (b.days?.length
+  ? b.days.includes(dayOfWeek(day)) && (!b.from || day >= b.from) && (!b.until || day <= b.until)
+  : (b.dates?.length ? b.dates.includes(day) : b.date === day));
 
-// Everything on one day's calendar, earliest first: classes, labs and your own blocks.
-// [{ kind: 'class'|'lab'|'study'|'work'|'appointment'|'other', title, start, end, place, color, course?, meeting?, block? }]
+// When an exam with a start time sits on the calendar: start to end (1 hour if no end time).
+export function examWindow(t) {
+  if (t.type !== 'exam' || !t.time) return null;
+  return { start: t.time, end: t.end && t.end > t.time ? t.end : toHM(Math.min(toMin(t.time) + 60, 23 * 60 + 59)) };
+}
+
+// An exam takes over its time slot: anything else in that slot is cut around it or hidden.
+function cutForExams(items) {
+  const byStart = (a, b) => a.start.localeCompare(b.start);
+  const exams = items.filter((i) => i.kind === 'exam');
+  if (!exams.length) return items.sort(byStart);
+  const wins = exams.map((e) => [toMin(e.start), e.end ? toMin(e.end) : toMin(e.start) + 60]);
+  const out = [...exams];
+  for (const it of items) {
+    if (it.kind === 'exam') continue;
+    const orig = [toMin(it.start), it.end ? toMin(it.end) : toMin(it.start) + 60];
+    let segs = [orig];
+    for (const [a, b] of wins) {
+      segs = segs.flatMap(([x, y]) => (b <= x || a >= y ? [[x, y]] : [[x, a], [b, y]].filter(([p, q]) => q - p >= 5)));
+    }
+    if (segs.length === 1 && segs[0][0] === orig[0] && segs[0][1] === orig[1]) out.push(it);
+    else for (const [x, y] of segs) out.push({ ...it, start: toHM(x), end: toHM(y), cut: true });
+  }
+  return out.sort(byStart);
+}
+
+// Everything on one day's calendar, earliest first: classes, labs, your own blocks and timed exams.
+// [{ kind: 'class'|'lab'|'exam'|'study'|'work'|'appointment'|'other', title, start, end, place, color, course?, meeting?, block?, task? }]
 export function dayItems(s, day) {
   const items = meetingsOn(s, day).map(({ course, meeting }) => ({
     kind: meeting.kind, title: course.name, start: meeting.start, end: meeting.end, place: meeting.place,
     color: course.color, course, meeting,
   }));
   for (const b of s.blocks) if (blockOn(b, day)) items.push({ kind: b.kind, title: b.title || BLOCK_KINDS[b.kind]?.label, start: b.start, end: b.end, place: b.place, block: b });
-  return items.sort((a, b) => a.start.localeCompare(b.start));
+  const courses = Object.fromEntries(s.courses.map((c) => [c.id, c]));
+  for (const t of liveTasks(s)) {
+    const w = t.due === day ? examWindow(t) : null;
+    if (w) items.push({ kind: 'exam', title: t.title, start: w.start, end: w.end, place: '', color: courses[t.courseId]?.color, course: courses[t.courseId], task: t });
+  }
+  return cutForExams(items);
 }
 
 const toMin = (hm) => { const [h, m] = hm.split(':').map(Number); return h * 60 + m; };
@@ -372,28 +438,79 @@ export function studyOverride(profile, budgetMood, today = todayKey()) {
   return { mood: st.mood, line: studyPipLine(st, today) };
 }
 
-// ---------- sharing your class schedule with friends ----------
-// Only class and lab times go out: course name, code, color, days and times.
-// Places, homework and your own calendar blocks never leave your phone.
-export function scheduleForFriends(data) {
-  const s = norm(data.study);
-  const out = [];
-  for (const c of s.courses) {
-    for (const m of c.meetings ?? []) {
-      if (!m.days?.length || !m.start) continue;
-      out.push({ name: c.name, code: c.code || '', color: c.color, kind: m.kind === 'lab' ? 'lab' : 'class', days: m.days, start: m.start, end: m.end || '' });
-    }
-  }
-  return out.slice(0, 80);
+// ---------- sharing your schedule with friends ----------
+// You pick what friends see: for everyone, and differently for any one friend.
+// The server only hands each friend the parts you allowed for them.
+export const SHARE_CATS = {
+  class: 'Classes and labs', exam: 'Exams', study: 'Study time', work: 'Work',
+  appointment: 'Appointments', other: 'Other blocks', place: 'Locations',
+};
+const DEFAULT_SHARE = { class: true, exam: false, study: false, work: false, appointment: false, other: false, place: false };
+const cleanShare = (v) => Object.fromEntries(Object.keys(DEFAULT_SHARE).map((k) => [k, typeof v?.[k] === 'boolean' ? v[k] : DEFAULT_SHARE[k]]));
+
+// { all: {class, exam, ...}, people: { friendId: {class, exam, ...} } }
+export function shareRulesOf(profile) {
+  const r = profile?.shareRules ?? {};
+  const people = {};
+  for (const [id, v] of Object.entries(r.people ?? {})) if (v && typeof v === 'object') people[id] = cleanShare(v);
+  return { all: cleanShare(r.all), people };
 }
 
-// A friend's shared classes on one day, earliest first.
-export function sharedOn(meetings, day) {
-  const dow = dayOfWeek(day);
-  return (Array.isArray(meetings) ? meetings : [])
-    .filter((m) => Array.isArray(m.days) && m.days.includes(dow) && /^\d\d:\d\d$/.test(m.start))
-    .map((m) => ({ kind: m.kind === 'lab' ? 'lab' : 'class', name: String(m.name || 'Class'), code: String(m.code || ''), color: m.color, start: m.start, end: /^\d\d:\d\d$/.test(m.end) ? m.end : '' }))
-    .sort((a, b) => a.start.localeCompare(b.start));
+// What goes to the server: only the kinds at least one friend is allowed to see.
+export function scheduleForFriends(data) {
+  const rules = shareRulesOf(data.profile);
+  const any = (cat) => rules.all[cat] || Object.values(rules.people).some((r) => r[cat]);
+  const place = (p) => (any('place') && p ? { place: String(p).slice(0, 60) } : {});
+  const s = norm(data.study);
+  const today = todayKey();
+  const horizon = addDays(today, 60);
+  const out = [];
+  if (any('class')) {
+    for (const c of s.courses) {
+      for (const m of c.meetings ?? []) {
+        if (!m.days?.length || !m.start) continue;
+        out.push({ cat: 'class', kind: m.kind === 'lab' ? 'lab' : 'class', name: c.name, code: c.code || '', color: c.color, days: m.days, start: m.start, end: m.end || '', ...place(m.place) });
+      }
+    }
+  }
+  if (any('exam')) {
+    const courses = Object.fromEntries(s.courses.map((c) => [c.id, c]));
+    for (const t of liveTasks(s)) {
+      const w = examWindow(t);
+      if (!w || t.due < today || t.due > horizon) continue;
+      const c = courses[t.courseId];
+      out.push({ cat: 'exam', kind: 'exam', name: t.title, code: c?.code || c?.name || '', color: c?.color || '', dates: [t.due], start: w.start, end: w.end });
+    }
+  }
+  for (const b of s.blocks) {
+    if (!BLOCK_KINDS[b.kind] || !any(b.kind) || !b.start) continue;
+    const base = { cat: b.kind, kind: b.kind, name: b.title || BLOCK_KINDS[b.kind].label, start: b.start, end: b.end || '', ...place(b.place) };
+    if (b.days?.length) {
+      if (b.until && b.until < today) continue;
+      out.push({ ...base, days: b.days, from: b.from || '', until: b.until || '' });
+    } else {
+      const dates = (b.dates?.length ? b.dates : [b.date]).filter((d) => d && d >= today && d <= horizon);
+      if (dates.length) out.push({ ...base, dates });
+    }
+  }
+  return out.slice(0, 150);
+}
+
+// A friend's shared items on one day, earliest first (their exams take over their slots too).
+const HM = /^\d\d:\d\d$/;
+const SHARED_KINDS = ['class', 'lab', 'exam', 'study', 'work', 'appointment', 'other'];
+const sharedDay = (m, day) => (Array.isArray(m.dates) && m.dates.length
+  ? m.dates.includes(day)
+  : Array.isArray(m.days) && m.days.includes(dayOfWeek(day)) && (!m.from || day >= m.from) && (!m.until || day <= m.until));
+export function sharedOn(items, day) {
+  const list = (Array.isArray(items) ? items : [])
+    .filter((m) => m && typeof m === 'object' && HM.test(m.start) && sharedDay(m, day))
+    .map((m) => ({
+      kind: SHARED_KINDS.includes(m.kind) ? m.kind : 'other', name: String(m.name || 'Busy'), title: String(m.name || 'Busy'),
+      code: String(m.code || ''), color: m.color, start: m.start, end: HM.test(m.end) ? m.end : '',
+      place: typeof m.place === 'string' ? m.place : '',
+    }));
+  return cutForExams(list);
 }
 
 // Where someone is at `hm` given that day's items: { busy, item, until }.

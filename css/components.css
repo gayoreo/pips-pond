@@ -993,3 +993,25 @@ body.is-locked { overflow: hidden; }
 .fw-list li { display: flex; gap: 10px; align-items: baseline; padding-left: 8px; border-left: 6px solid var(--course); font-size: 15px; }
 .fw-time { flex: none; min-width: 128px; font-weight: 800; font-size: 13px; }
 .fw-free li { background: var(--pond); border: 2px solid var(--ink); border-radius: 12px; padding: 6px 12px; font-weight: 700; }
+/* ==================== Exams on the calendar, block dates, repeats, friend sheets ==================== */
+:root { --kind-exam: #F4B6B6; }
+.wk-item--exam button, .wk-item--exam { font-weight: 800; }
+.date-row { display: flex; gap: 8px; align-items: center; }
+.date-row input { flex: 1; }
+.series-list, .existing-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.series-row, .existing-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 0; border-bottom: 1px dashed var(--tape); }
+.series-row.is-skipped span:first-child { text-decoration: line-through; opacity: 0.6; }
+.series-row.is-done span:first-child { opacity: 0.6; }
+.friend__open { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; background: none; border: 0; padding: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.friend__open .friend__who { min-width: 0; }
+.friend__now.is-free, .free-now .is-free { color: inherit; }
+.free-now { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.free-now button { width: 100%; text-align: left; background: none; border: 0; padding: 4px 0; font: inherit; color: inherit; cursor: pointer; }
+.free-now .muted, .free-now .is-free { font-size: 14px; }
+.fs-head { display: flex; gap: 12px; align-items: center; }
+.fs-frog { width: 64px; height: 64px; }
+.fs-name { margin: 0; font-size: 24px; }
+.fs-head p { margin: 2px 0; }
+.fs-pings { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.fs-section { margin-top: 14px; }
+.fs-section .row { align-items: flex-end; }

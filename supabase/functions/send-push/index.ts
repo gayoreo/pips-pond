@@ -175,17 +175,18 @@ async function runCron() {
   return sent;
 }
 
-const PING_TEXT: Record<string, (who: string, theirFrog: string, yourFrog: string) => Message> = {
+const PING_TEXT: Record<string, (who: string, theirFrog: string, yourFrog: string, note: string) => Message> = {
   snack: (who, theirFrog) => ({ title: `${who} sent ${theirFrog} a snack!`, body: `${theirFrog} is munching away.`, tag: 'friends' }),
   cheer: (who) => ({ title: `${who} is cheering for you!`, body: 'Open the app to see your pond.', tag: 'friends' }),
   visit: (who, _theirFrog, yourFrog) => ({ title: `${yourFrog} is visiting!`, body: `${who}’s frog hopped over to your pond.`, tag: 'friends' }),
   dance: (who, theirFrog, yourFrog) => ({ title: `${yourFrog} did a silly dance!`, body: `${who}’s frog is dancing for ${theirFrog}.`, tag: 'friends' }),
+  study: (who, _theirFrog, _yourFrog, note) => ({ title: `${who} wants to study together`, body: note ? `How about ${note}?` : 'Open the app to answer.', tag: 'friends' }),
 };
 
 async function sendPing(req: Request, pingId: number) {
   const user = await userFrom(req);
   if (!user) return reply({ error: 'Sign in first.' }, 401);
-  const { data: ping } = await admin.from('pings').select('id, sender, recipient, kind').eq('id', pingId).maybeSingle();
+  const { data: ping } = await admin.from('pings').select('id, sender, recipient, kind, note').eq('id', pingId).maybeSingle();
   if (!ping || ping.sender !== user.id) return reply({ error: 'Not found.' }, 404);
   const [{ data: state }, { data: people }] = await Promise.all([
     admin.from('notify_state').select('prefs').eq('user_id', ping.recipient).maybeSingle(),
@@ -195,7 +196,8 @@ async function sendPing(req: Request, pingId: number) {
   const from = people?.find((p) => p.id === ping.sender);
   const to = people?.find((p) => p.id === ping.recipient);
   const who = from?.nickname || (from?.username ? `@${from.username}` : 'A friend');
-  const msg = PING_TEXT[ping.kind](who, to?.frog_name || 'Pip', from?.frog_name || 'A frog');
+  const text = PING_TEXT[ping.kind] ?? PING_TEXT.cheer;
+  const msg = text(who, to?.frog_name || 'Pip', from?.frog_name || 'A frog', ping.note || '');
   return reply({ sent: await pushTo(ping.recipient, msg) });
 }
 

@@ -73,11 +73,11 @@ export async function removeFriend(id) {
   return refreshFriends();
 }
 
-// Sends a snack / cheer / visit / dance, then asks the server to push a notification to them.
-export async function sendPing(friendId, kind) {
+// Sends a snack / cheer / visit / dance / study invite (note = suggested time), then asks the server to push a notification to them.
+export async function sendPing(friendId, kind, note = null) {
   let id;
   try {
-    id = await call('send_ping', { friend: friendId, what: kind });
+    id = await call('send_ping', { friend: friendId, what: kind, note });
   } catch (err) {
     if (/slow_down/.test(err.message)) throw new Error('You just sent one! Try again in a few minutes.');
     throw err;

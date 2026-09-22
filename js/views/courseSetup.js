@@ -1,7 +1,8 @@
 // Course setup: name and color, class times, lab times, exams, then assignments and readings
 // (typed in or pasted from a syllabus). Also used to edit a course's times later.
 import { getStudy, saveCourse, parseSyllabus, liveTasks, TASK_TYPES, COURSE_COLORS } from '../data/study.js';
-import { todayKey } from '../core/dates.js';
+import { todayKey, formatShort, formatHM } from '../core/dates.js';
+import { openTaskSheet } from './study.js';
 import { esc } from '../ui/dom.js';
 import { toast } from '../ui/toast.js';
 import { play } from '../ui/sound.js';
@@ -14,6 +15,33 @@ const TITLES = {
 };
 const w = { step: 0, id: '', name: '', code: '', color: '', meetings: [], exams: [], work: [], paste: '', existing: 0 };
 
+// When editing a course: what's already in the planner for it, so it can be edited from here.
+// A weekly repeat shows once (its next copy).
+function existingHTML(match) {
+  if (!w.id) return '';
+  const today = todayKey();
+  const seen = new Set();
+  const list = liveTasks(getStudy())
+    .filter((t) => t.courseId === w.id && match(t))
+    .sort((a, b) => a.due.localeCompare(b.due))
+    .filter((t) => {
+      if (!t.seriesId) return true;
+      if (seen.has(t.seriesId) || t.done || t.due < today) return false;
+      seen.add(t.seriesId);
+      return true;
+    });
+  if (!list.length) return '';
+  return `
+    <section class="card">
+      <h2 class="card__title">Already in your planner</h2>
+      <ul class="existing-list">${list.map((t) => `
+        <li>
+          <span>${esc(t.title)} <span class="muted">${esc(formatShort(t.due))}${t.time ? ` ${esc(formatHM(t.time))}` : ''}${t.seriesId ? ' · weekly' : ''}${t.done ? ' · done' : ''}</span></span>
+          <button type="button" class="btn-plain" data-edit-task="${esc(t.id)}">edit</button>
+        </li>`).join('')}</ul>
+    </section>`;
+}
+
 const blankMeeting = (kind) => ({ kind, days: [], start: '', end: '', place: '' });
 
 export function beginCourseSetup(courseId) {
@@ -25,7 +53,7 @@ export function beginCourseSetup(courseId) {
     code: course?.code ?? '',
     color: course?.color ?? COURSE_COLORS[getStudy().courses.length % COURSE_COLORS.length],
     meetings: (course?.meetings ?? []).map((m) => ({ ...m, days: [...m.days] })),
-    exams: course ? [] : [{ title: 'Midterm 1', due: '', time: '' }, { title: 'Final exam', due: '', time: '' }],
+    exams: course ? [] : [{ title: 'Midterm 1', due: '', time: '', end: '' }, { title: 'Final exam', due: '', time: '', end: '' }],
     work: [],
     paste: '',
     existing: course ? liveTasks(getStudy()).filter((t) => t.courseId === course.id).length : 0,
@@ -72,13 +100,15 @@ function stepHTML() {
   }
   if (name === 'exams') {
     return `
-    <p class="card__hint">${w.existing ? 'Anything already in your planner stays. Exams you add here are added to it. ' : ''}Leave out any you don't know yet. You can add them later from the planner.</p>
+    ${existingHTML((t) => t.type === 'exam')}
+    <p class="card__hint">${w.existing ? 'Anything already in your planner stays. Exams you add here are added to it. ' : ''}Leave out any you don't know yet. You can add them later from the planner. With a start time, an exam shows on your week and takes over that slot.</p>
     ${w.exams.map((x, i) => `
       <section class="card meet" data-exam="${i}">
         <label class="field">Name<input data-x="title" maxlength="60" value="${esc(x.title)}"></label>
+        <label class="field">Date<input type="date" data-x="due" value="${esc(x.due)}"></label>
         <div class="grid-2">
-          <label class="field">Date<input type="date" data-x="due" value="${esc(x.due)}"></label>
-          <label class="field"><span class="field__label">Time <span class="muted">(optional)</span></span><input type="time" data-x="time" value="${esc(x.time)}"></label>
+          <label class="field"><span class="field__label">Starts <span class="muted">(optional)</span></span><input type="time" data-x="time" value="${esc(x.time)}"></label>
+          <label class="field"><span class="field__label">Ends <span class="muted">(optional)</span></span><input type="time" data-x="end" value="${esc(x.end || '')}"></label>
         </div>
         <button type="button" class="btn-plain btn-plain--danger" data-remove-exam="${i}">remove</button>
       </section>`).join('')}
@@ -86,6 +116,7 @@ function stepHTML() {
   }
   if (name === 'work') {
     return `
+    ${existingHTML((t) => t.type !== 'exam')}
     <section class="card">
       <h2 class="card__title">Paste from your syllabus</h2>
       <p class="card__hint">One item per line with a date somewhere in it, like <b>Oct 3: Problem set 1</b> or <b>9/29 Read chapter 2</b>. Lines without a date are skipped.</p>
@@ -152,6 +183,10 @@ function problem() {
     const bad = w.exams.find((x) => x.title.trim() && !x.due);
     if (bad) return `${bad.title.trim()} needs a date, or remove it.`;
   }
+  if (name === 'exams') {
+    const late = w.exams.find((x) => x.title.trim() && x.time && x.end && x.end <= x.time);
+    if (late) return `${late.title.trim()} ends before it starts.`;
+  }
   if (name === 'work') {
     const bad = w.work.find((x) => x.title.trim() && !x.due);
     if (bad) return `${bad.title.trim()} needs a due date, or remove it.`;
@@ -196,7 +231,14 @@ export function renderCourseSetup(root) {
     if (addMeeting) { readStep(root); w.meetings.push(blankMeeting(addMeeting.dataset.addMeeting)); return rerender(); }
     const rmMeeting = t.closest('[data-remove-meeting]');
     if (rmMeeting) { readStep(root); w.meetings.splice(Number(rmMeeting.dataset.removeMeeting), 1); return rerender(); }
-    if (t.closest('[data-add-exam]')) { readStep(root); w.exams.push({ title: '', due: '', time: '' }); return rerender(); }
+    if (t.closest('[data-add-exam]')) { readStep(root); w.exams.push({ title: '', due: '', time: '', end: '' }); return rerender(); }
+    const editTask = t.closest('[data-edit-task]');
+    if (editTask) {
+      readStep(root);
+      const task = getStudy().tasks.find((x) => x.id === editTask.dataset.editTask);
+      if (task) openTaskSheet(task, rerender);
+      return undefined;
+    }
     const rmExam = t.closest('[data-remove-exam]');
     if (rmExam) { readStep(root); w.exams.splice(Number(rmExam.dataset.removeExam), 1); return rerender(); }
     if (t.closest('[data-add-work]')) { readStep(root); w.work.push({ title: '', type: 'assignment', due: '' }); return rerender(); }
@@ -207,7 +249,7 @@ export function renderCourseSetup(root) {
       const { items, skipped } = parseSyllabus(w.paste, todayKey());
       if (!items.length) return toast('No dates found. Try lines like "Oct 3: Problem set 1".');
       for (const x of items) {
-        if (x.type === 'exam') w.exams.push({ title: x.title, due: x.due, time: '' });
+        if (x.type === 'exam') w.exams.push({ title: x.title, due: x.due, time: '', end: '' });
         else w.work.push(x);
       }
       w.paste = '';
@@ -221,7 +263,7 @@ export function renderCourseSetup(root) {
       if (bad) return toast(bad, 3500);
       if (!last) { w.step += 1; window.scrollTo(0, 0); return rerender(); }
       const tasks = [
-        ...w.exams.filter((x) => x.title.trim() && x.due).map((x) => ({ title: x.title, type: 'exam', due: x.due, time: x.time })),
+        ...w.exams.filter((x) => x.title.trim() && x.due).map((x) => ({ title: x.title, type: 'exam', due: x.due, time: x.time, end: x.time ? x.end : '' })),
         ...w.work.filter((x) => x.title.trim() && x.due).map((x) => ({ title: x.title, type: x.type, due: x.due, time: '' })),
       ];
       saveCourse({ id: w.id, name: w.name, code: w.code, color: w.color, meetings: w.meetings }, tasks);

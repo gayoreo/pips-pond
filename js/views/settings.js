@@ -1,5 +1,5 @@
 import {
-  getSettings, saveSettings, getEntries, addEntry, resetAll, getTheme, setTheme, getProfile, saveProfile, getFavorites,
+  getSettings, saveSettings, getEntries, addEntry, resetAll, getTheme, setTheme, getProfile, saveProfile,
 } from '../data/db.js';
 import { budget, exchangeDaysOf, DEFAULT_EXCHANGE_DAYS } from '../core/calc.js';
 import { learnWeights } from '../core/weights.js';
@@ -97,22 +97,6 @@ function weightsText(settings, entries) {
   return `Learned from ${learned.days} days: ${learned.weights.map((w, i) => `${short[i]} ×${w}`).join(' · ')}`;
 }
 
-function shortcutsHTML(favorites) {
-  const base = `${location.origin}${location.pathname}`;
-  const links = [
-    ['Log a swipe', `${base}?log=swipe`],
-    ['Log an exchange', `${base}?log=exchange`],
-    ['Open the points keypad', `${base}?log=points`],
-    ...favorites.slice(0, 6).map((f) => [`Favorite: ${f.name}`, `${base}?fav=${encodeURIComponent(f.name)}`]),
-  ];
-  return links.map(([label, url]) => `
-    <div class="shortcut">
-      <span class="shortcut__label">${esc(label)}</span>
-      <code class="shortcut__url">${esc(url)}</code>
-      <button type="button" class="btn-plain" data-copy="${esc(url)}">copy</button>
-    </div>`).join('');
-}
-
 export async function renderSettings(root) {
   const saved = await getSettings();
   const s = { ...defaults(), ...(saved ?? {}) };
@@ -122,7 +106,6 @@ export async function renderSettings(root) {
   const b = saved ? budget(saved, entries, todayKey()) : null;
   const theme = getTheme();
   const profile = await getProfile();
-  const favorites = await getFavorites();
   const rolledIn = (Number(s.swipesRolledIn) || 0) || (Number(s.pointsRolledIn) || 0);
 
   // Account / sync / lock / notifications
@@ -303,12 +286,6 @@ export async function renderSettings(root) {
       <h2 class="card__title">Semesters &amp; your data ${infoBtn('See past semesters and their report cards, start the next semester, download your data, or import your school’s transaction history.')}</h2>
       <a class="btn-plain" href="#/semesters">Semester history &amp; next semester →</a>
       <a class="btn-plain" href="#/data">Export, import &amp; backups →</a>
-    </section>
-
-    <section class="card">
-      <h2 class="card__title">iPhone shortcuts ${infoBtn('In the Shortcuts app: New Shortcut → add “Open URLs” → paste a link below. Then add it to your Home Screen, or assign it in Settings → Accessibility → Touch → Back Tap.')}</h2>
-      <p class="card__hint">Open one of these links to log without tapping through the app. When you’re signed in, these open the app and sync straight to your account, wherever you tap them.</p>
-      ${shortcutsHTML(favorites)}
     </section>` : ''}
 
     <section class="card">

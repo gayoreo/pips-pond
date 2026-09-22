@@ -59,6 +59,62 @@ function weightedDays(from, to, daysOff, w) {
   return n;
 }
 
+// Same as weightedDays, but counts every calendar day — days off included.
+// Used to size a week's plan share so a week with a day or two off still gets
+// its full allotted slice of the semester (the days off just don't spend it;
+// the rest of that week's eating days effectively absorb their share).
+function planWeightedDays(from, to, w) {
+  let n = 0;
+  for (let k = from; k <= to; k = addDays(k, 1)) n += w[dayOfWeek(k)];
+  return n;
+}
+
+// How many points-adjusted "base" changes (fund/adjust) happened during one week —
+// these change the semester total and should count toward that week's plan, same as
+// spending counts against it, so a mid-week top-up or correction lands where it happened.
+function baseInRange(entries, settings, from, to) {
+  return sums(entries, settings, { from, to, base: true }).points;
+}
+
+/**
+ * Walks the semester week by week (from its first week through `uptoWeekStart`,
+ * inclusive) carrying a running rollover of planned-vs-spent points. Returns the
+ * rollover carried INTO the week that starts at `uptoWeekStart`, plus that week's
+ * own plan (so callers don't have to recompute it).
+ *
+ * `planPerUnit` is points-per-weighted-day-unit for the whole semester (a fixed
+ * rate; it does not change as the semester progresses), so each week's plan is
+ * just `planPerUnit * thatWeek'sWeightedDays`.
+ */
+function weeklyRollover(settings, entries, planPerUnit, w, uptoWeekStart) {
+  const { start, end } = settings;
+  let carry = 0;
+  let weekStart = startOfWeek(start, settings.weekStart ?? 0);
+  let thisWeekPlan = 0;
+
+  while (weekStart <= uptoWeekStart) {
+    const from = maxKey(weekStart, start);
+    const to = minKey(addDays(weekStart, 6), end);
+    if (from > to) { weekStart = addDays(weekStart, 7); continue; }
+
+    // Days off inside the week don't shrink its plan — the week keeps its full slice.
+    const wDays = planWeightedDays(from, to, w);
+    const plan = planPerUnit * wDays;
+    thisWeekPlan = plan;
+
+    if (weekStart < uptoWeekStart) {
+      // A past week: settle it — spend + base changes against (plan + carried-in rollover),
+      // and whatever's left (or over) becomes the rollover for the next week.
+      const spent = sums(entries, settings, { from, to }).points;
+      const baseChanges = baseInRange(entries, settings, from, to);
+      const pool = plan + carry;
+      carry = pool - spent - baseChanges;
+    }
+    weekStart = addDays(weekStart, 7);
+  }
+  return { carry, plan: thisWeekPlan };
+}
+
 export function budget(settings, entries, today, { weights } = {}) {
   const { start, end } = settings;
   const daysOff = settings.daysOff ?? [];
@@ -83,7 +139,7 @@ export function budget(settings, entries, today, { weights } = {}) {
   const weekTo = minKey(weekEnd, end);
   const semesterDays = end < start ? 0 : eatingDays(start, end, daysOff);
 
-  // ---- swipes: a whole-number weekly pool ----
+  // ---- swipes: a whole-number weekly pool (unchanged: already rolls over week to week) ----
   const swipes = (() => {
     const balance = totals.swipes - spentAll.swipes - base.swipes;
     const startWeek = totals.swipes - spentBeforeWeek.swipes - base.swipes;
@@ -104,16 +160,28 @@ export function budget(settings, entries, today, { weights } = {}) {
     };
   })();
 
-  // ---- points: a daily amount, weighted by weekday habits ----
+  // ---- points: a weekly pool (plan + rollover from previous weeks), split across
+  //      the week's remaining days using the auto-learned weekday weights ----
   const points = (() => {
     const balance = totals.points - spentAll.points - base.points;
-    const startToday = totals.points - spentBeforeToday.points - base.points;
-    const startWeek = totals.points - spentBeforeWeek.points - base.points;
-    const wLeft = today > end ? 0 : weightedDays(maxKey(today, start), end, daysOff, w);
-    const wFromWeek = weekFrom > end ? 0 : weightedDays(weekFrom, end, daysOff, w);
+    // Days off don't shrink the semester's total plan pie either — same basis as each week's plan.
+    const semesterWeighted = end >= start ? planWeightedDays(start, end, w) : 0;
+    const planPerUnit = semesterWeighted > 0 ? totals.points / semesterWeighted : 0;
+
+    const { carry, plan: thisWeekPlan } = weeklyRollover(settings, entries, planPerUnit, w, weekStart);
+    const weekPool = thisWeekPlan + carry;
+
+    // Base changes (fund/adjust) made THIS week shift the pool same as rollover would,
+    // and — like spending — a same-day one is felt immediately in today's daily amount.
+    const baseThisWeekUpToToday = baseInRange(entries, settings, weekFrom, today);
+    const startToday = weekPool - (spentThisWeek.points - spentToday.points) - baseThisWeekUpToToday;
+
     const wThisWeek = weekFrom > weekTo ? 0 : weightedDays(weekFrom, weekTo, daysOff, w);
-    const daily = dayOff || wLeft === 0 ? 0 : (startToday * w[dayOfWeek(today)]) / wLeft;
-    const weekly = wFromWeek === 0 ? 0 : (startWeek * wThisWeek) / wFromWeek;
+    const wRemainingThisWeek = today > weekTo ? 0 : weightedDays(maxKey(today, weekFrom), weekTo, daysOff, w);
+
+    const daily = dayOff || wRemainingThisWeek === 0 ? 0 : (startToday * w[dayOfWeek(today)]) / wRemainingThisWeek;
+    const weekly = weekPool; // this week's real pool, rollover included
+
     return {
       total: totals.points,
       balance,

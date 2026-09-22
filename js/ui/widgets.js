@@ -16,6 +16,7 @@ export function noteHTML(kind, label, p, fmt) {
   const weekStat = isSwipes
     ? `<span class="stat__v">${fmt(p.usedWeek)}</span><span class="stat__s">used of ${fmt(p.weekly)}</span>`
     : `<span class="stat__v">${fmt(Math.abs(p.leftWeek))}</span><span class="stat__s">${p.leftWeek < -0.004 ? 'over' : 'left'}</span>`;
+  const ringValue = fmt(Math.abs(p.leftToday));
 
   return `
   <section class="note note--${kind}" aria-label="${label}">
@@ -28,7 +29,7 @@ export function noteHTML(kind, label, p, fmt) {
             stroke-dasharray="${(frac * RING).toFixed(1)} ${RING.toFixed(1)}" transform="rotate(-90 50 50)"/>` : ''}
         </g>
       </svg>
-      <span class="ring__value${over ? ' is-over' : ''}">${fmt(Math.abs(p.leftToday))}</span>
+      <span class="ring__value${over ? ' is-over' : ''}" data-len="${Math.min(9, esc(ringValue).length)}">${esc(ringValue)}</span>
     </div>
     <span class="note__caption">${caption}</span>
     <div class="note__stats">

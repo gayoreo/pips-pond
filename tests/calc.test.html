@@ -53,7 +53,10 @@
 
     b = budget(s, e, '2026-09-02');
     check('next day swipes carry the rest of the pool (3)', b.swipes.leftToday, 3);
-    check('day 2 recalculated points (80 / 7 days)', b.points.daily, 80 / 7);
+    // Points now roll over week to week, not semester to semester: week 1's pool is
+    // $50 (its plan share, days off included), minus the $20 already spent on Sep 1,
+    // split across the 3 remaining eating days in the week (Sep 2–4; Sep 5 is off).
+    check('day 2 recalculated points, weekly pool ((50-20)/3)', b.points.daily, 10);
 
     b = budget(s, e, '2026-09-05');
     check('day off → no points allowance', b.points.daily, 0);
@@ -61,7 +64,8 @@
     check('day off → swipe pool still shown (3)', b.swipes.leftToday, 3);
 
     b = budget(s, [...e, { type: 'adjust-points', amount: 5, date: '2026-09-02' }], '2026-09-02');
-    check('adjustment adds $5 (85 / 7)', b.points.daily, 85 / 7);
+    // A same-day adjustment is felt immediately, like same-day spending: (50-20+5)/3.
+    check('same-day adjustment adds $5 to this week’s pool ((50-20+5)/3)', b.points.daily, 35 / 3);
 
     const ex = [{ type: 'exchange', amount: 1, date: '2026-09-02' }];
     check('exchange counted this week', budget(s, ex, '2026-09-02').exchanges.used, 1);
@@ -84,10 +88,28 @@
     check('exchanges allowed on Wednesday', budget(s, [], '2026-09-02').exchanges.allowedToday, true);
     check('exchanges NOT allowed on Saturday', budget(s, [], '2026-09-05').exchanges.allowedToday, false);
 
+    // ---- Weekly rollover (points) ----
+    // Week 1 (Sep 1–5, Sep 5 off) plans $50; spend only $20 → $30 rolls into week 2.
+    // Week 2 (Sep 6–10, Sep 6 off) plans another $50, so its pool is $50 + $30 = $80.
+    check('underspent week rolls its leftover into next week (50+30)', budget(s, e, '2026-09-07').points.weekly, 80);
+    const eOver = [{ type: 'points', amount: 60, date: '2026-09-01' }]; // week 1 pool is $50, overspent by $10
+    check('overspent week carries the deficit into next week (50-10)', budget(s, eOver, '2026-09-07').points.weekly, 40);
+
+    // A week with days off keeps its full plan share (days off don't shrink it) —
+    // the rest of that week's eating days absorb what the days off would've used.
+    const daysOffWeek = {
+      start: '2026-08-31', end: '2026-09-13', weekStart: 1, swipesTotal: 0, pointsTotal: 140, exchangeLimit: 0,
+      daysOff: [{ from: '2026-09-02', to: '2026-09-03', label: 'Break' }], weightMode: 'equal',
+    };
+    check('a week with 2 days off still plans its full share (70, not 50)',
+      budget(daysOffWeek, [], '2026-08-31').points.weekly, 70);
+    check('unspent days-off week rolls its whole plan forward (70+70)',
+      budget(daysOffWeek, [], '2026-09-07').points.weekly, 140);
+
     // ---- Pass 4: funds, guests, weights, rollover, import ----
     check('added $50 points raises the balance', balances(s, [{ type: 'fund-points', amount: 50, date: '2026-09-02' }]).points, 150);
-    check('added funds re-balance the daily budget (150 / 7)',
-      budget(s, [{ type: 'fund-points', amount: 50, date: '2026-09-02' }], '2026-09-02').points.daily, 150 / 7);
+    check('added funds re-balance this week’s pool ((50+50)/3)',
+      budget(s, [{ type: 'fund-points', amount: 50, date: '2026-09-02' }], '2026-09-02').points.daily, 100 / 3);
     check('added swipes raise the swipe balance', balances(s, [{ type: 'fund-swipes', amount: 5, date: '2026-09-02' }]).swipes, 15);
     check('guest passes are counted separately',
       budget({ ...s, guestTotal: 4 }, [{ type: 'guest', amount: 1, date: '2026-09-02' }], '2026-09-02').guests.left, 3);

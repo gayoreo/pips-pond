@@ -82,7 +82,28 @@
   display: flex; align-items: center; justify-content: center;
   font-family: var(--font-hand); font-size: 30px; font-weight: 700;
   color: var(--accent);
+  white-space: nowrap;
 }
+/* Auto-shrink as the value gets longer, so it always fits inside the ring.
+   Each rule matches "at least this many characters" — later, larger
+   thresholds win when several match, since equal-specificity rules
+   cascade by source order. */
+.ring__value[data-len]      { font-size: 30px; }
+.ring__value[data-len="5"],
+.ring__value[data-len="6"],
+.ring__value[data-len="7"],
+.ring__value[data-len="8"],
+.ring__value[data-len="9"] { font-size: 26px; }
+.ring__value[data-len="6"],
+.ring__value[data-len="7"],
+.ring__value[data-len="8"],
+.ring__value[data-len="9"] { font-size: 22px; }
+.ring__value[data-len="7"],
+.ring__value[data-len="8"],
+.ring__value[data-len="9"] { font-size: 19px; }
+.ring__value[data-len="8"],
+.ring__value[data-len="9"] { font-size: 17px; }
+.ring__value[data-len="9"] { font-size: 15px; }
 .ring__value.is-over { color: var(--coral); }
 .note__caption { font-size: 13px; font-weight: 600; color: var(--ink-2); }
 .note__stats {

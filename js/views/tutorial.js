@@ -247,6 +247,10 @@ function extrasHTML(d) {
       ${field('Label', '<input id="off-label" maxlength="40" autocomplete="off">')}
       <button type="button" class="btn-sketch" data-off-add>+ add days off</button>
     </section>
+    <section class="card">
+      <h2 class="card__title">Reminders <span class="muted">(optional)</span></h2>
+      <p class="card__hint">Once you make an account, Pip can send a gentle daily nudge, a heads-up when you go over for the week, and a warning before the semester ends. Turn these on any time in <b>Settings → Notifications</b>.</p>
+    </section>
     ${started ? `
     <section class="card card--sticky">
       <h2 class="card__title">Match my card <span class="muted">(optional)</span></h2>

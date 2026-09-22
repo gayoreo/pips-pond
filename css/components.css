@@ -607,3 +607,80 @@ body.no-tabs #app { padding-bottom: calc(env(safe-area-inset-bottom) + 24px); }
   .tutorial:not(.tutorial--practice) { max-width: 640px; margin: 0 auto; width: 100%; }
 }
 .field__label { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 2px; }
+
+/* ==================== Accounts, friends & notifications (Part 5) ==================== */
+
+/* ---- Auth screens (login / signup / reset / merge / finish) ---- */
+.auth { display: flex; flex-direction: column; gap: 14px; max-width: 460px; margin: 0 auto; width: 100%; }
+.auth__hero { position: relative; }
+.auth__hero .pond { height: 150px; }
+.auth__hero .frog { width: 140px; height: 140px; margin-left: -70px; top: 8px; }
+.auth__card { display: flex; flex-direction: column; gap: 12px; }
+.auth__alt { text-align: center; margin: 0; }
+.auth__skip { align-self: center; }
+.btn-google {
+  background: var(--card); color: var(--ink);
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+}
+.btn-google::before {
+  content: ""; width: 18px; height: 18px; flex: none;
+  background: conic-gradient(from -45deg, #EA4335 0 25%, #FBBC05 0 50%, #34A853 0 75%, #4285F4 0);
+  -webkit-mask: radial-gradient(circle 8px, transparent 96%, #000 100%); mask: radial-gradient(circle 8px, transparent 96%, #000 100%);
+  border-radius: 50%;
+}
+.or { display: flex; align-items: center; gap: 10px; color: var(--ink-2); margin: 2px 0; }
+.or::before, .or::after { content: ""; flex: 1; border-top: 2px dashed var(--line, #d9cfba); }
+.form-error { margin: 0; color: var(--coral); font-weight: 700; min-height: 1.2em; }
+.form-error:empty { min-height: 0; }
+.field-note { margin: -6px 0 0; font-size: 14px; color: var(--ink-2); }
+.field-note.is-good { color: var(--green-dark, #3c7a3c); }
+.field-note.is-bad { color: var(--coral); }
+.field.grow { flex: 1; }
+
+/* ---- Face ID lock overlay ---- */
+.lock {
+  position: fixed; inset: 0; z-index: 100; background: var(--paper);
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+body.is-locked { overflow: hidden; }
+.lock__card { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 12px; max-width: 320px; }
+.lock__card .frog { position: static; width: 150px; height: 150px; margin: 0; }
+.lock__title { font-size: 24px; margin: 0; }
+.lock__msg { margin: 0; min-height: 1.2em; }
+
+/* ---- Sheet date/time row ---- */
+.sheet__when { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 4px; }
+.sheet__when .field { margin: 0; }
+
+/* ---- Pings on the pond ---- */
+.pings {
+  background: var(--yellow-note); border: 2px solid var(--ink); border-radius: var(--wobble-2);
+  padding: 10px 14px; transform: rotate(-0.5deg); display: flex; flex-direction: column; gap: 4px;
+}
+.pings .ping { margin: 0; font-family: var(--font-hand); font-weight: 700; font-size: 18px; }
+.pings .btn-plain { align-self: flex-end; }
+
+/* ---- Friends page ---- */
+.friends, .reqs { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.friend { display: flex; align-items: center; gap: 10px; }
+.friend__frog { position: static; width: 46px; height: 46px; flex: none; }
+.friend__frog svg { width: 100%; height: 100%; display: block; }
+.friend__who { display: flex; flex-direction: column; line-height: 1.1; min-width: 0; }
+.friend__who .hand { font-size: 19px; }
+.friend__who .muted { font-size: 13px; }
+.friend__acts { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+.ping-btn {
+  width: 40px; height: 40px; flex: none; font-size: 20px; line-height: 1;
+  background: var(--card); border: 2px solid var(--ink); border-radius: var(--wobble-3); cursor: pointer;
+}
+.ping-btn:active { transform: translateY(2px) scale(0.95); }
+.ping-btn:disabled { opacity: 0.5; }
+.req { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.req span { font-size: 15px; }
+.req--out { color: var(--ink-2); }
+
+@media (min-width: 900px) {
+  .auth { max-width: 520px; }
+  .auth__hero .pond { height: 200px; }
+  .auth__hero .frog { width: 180px; height: 180px; margin-left: -90px; }
+}

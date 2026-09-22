@@ -66,3 +66,19 @@ export const formatMonth = (ym) =>
 
 export const formatTime = (iso) =>
   new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+
+// "19:05" -> "7:05 PM". Returns '' for anything that isn't a HH:MM string.
+export function formatHM(hm) {
+  if (!/^\d{1,2}:\d{2}$/.test(hm ?? '')) return '';
+  const [h, m] = hm.split(':').map(Number);
+  const d = new Date(2000, 0, 1, h, m);
+  return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+
+// The HH:MM (24h) part of an ISO timestamp, in the local time zone.
+export function hmOf(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}

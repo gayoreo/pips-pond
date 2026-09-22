@@ -4,8 +4,17 @@ const KEY = 'pips-pond:v1';
 const THEME_KEY = 'pips-pond:theme';
 export const CHANGE_EVENT = 'pond:changed';
 
-const DEFAULT_PROFILE = { nickname: '', frogName: 'Pip', tutorialDone: false, recapSeen: '', reportSeen: '' };
-const empty = () => ({ settings: null, entries: [], favorites: [], profile: { ...DEFAULT_PROFILE }, archive: [] });
+export const DEFAULT_NOTIFY = { nudge: true, nudgeTime: '19:00', pace: true, semesterEnd: true, friends: true };
+const DEFAULT_PROFILE = {
+  nickname: '', frogName: 'Pip', tutorialDone: false, recapSeen: '', reportSeen: '', notify: DEFAULT_NOTIFY,
+};
+
+// meta = when each part last changed on this device. pushed = the version the cloud has.
+// owner = the account this data belongs to (null = never signed in).
+const empty = () => ({
+  settings: null, entries: [], favorites: [], profile: { ...DEFAULT_PROFILE }, archive: [],
+  meta: {}, pushed: {}, owner: null,
+});
 
 function load() {
   try {
@@ -16,12 +25,15 @@ function load() {
   }
 }
 
-function save(data) {
+function save(data, notify = true) {
   localStorage.setItem(KEY, JSON.stringify(data));
-  window.dispatchEvent(new Event(CHANGE_EVENT));
+  if (notify) window.dispatchEvent(new Event(CHANGE_EVENT));
 }
 
-const newId = () =>
+const now = () => new Date().toISOString();
+const touch = (data, ...parts) => { const t = now(); for (const p of parts) data.meta[p] = t; };
+
+export const newId = () =>
   crypto.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
 // ---------- settings ----------
@@ -31,7 +43,8 @@ export async function getSettings() {
 
 export async function saveSettings(settings) {
   const data = load();
-  data.settings = { ...settings, updatedAt: new Date().toISOString() };
+  data.settings = { ...settings, updatedAt: now() };
+  touch(data, 'settings');
   save(data);
 }
 
@@ -40,11 +53,11 @@ export async function getEntries() {
   return load().entries.filter((e) => !e.deleted);
 }
 
-export async function addEntry({ type, amount, date = todayKey(), note = '' }) {
-  const now = new Date().toISOString();
+export async function addEntry({ type, amount, date = todayKey(), time = '', note = '' }) {
+  const t = now();
   const entry = {
-    id: newId(), type, amount: Number(amount), date, note,
-    createdAt: now, updatedAt: now, deleted: false, synced: false,
+    id: newId(), type, amount: Number(amount), date, time, note,
+    createdAt: t, updatedAt: t, deleted: false, synced: false,
   };
   const data = load();
   data.entries.push(entry);
@@ -56,13 +69,23 @@ export async function updateEntry(id, patch) {
   const data = load();
   const entry = data.entries.find((e) => e.id === id);
   if (!entry) return null;
-  Object.assign(entry, patch, { updatedAt: new Date().toISOString(), synced: false });
+  Object.assign(entry, patch, { updatedAt: now(), synced: false });
   save(data);
   return entry;
 }
 
 export async function deleteEntry(id) {
   return updateEntry(id, { deleted: true });
+}
+
+// Marks every current entry as deleted (kept as a "tombstone" so other devices delete it too).
+function tombstoneAll(data) {
+  const t = now();
+  for (const e of data.entries) {
+    if (!e.deleted) Object.assign(e, { deleted: true, updatedAt: t, synced: false });
+  }
+  // Tombstones are only needed until the cloud has them (or never, without an account).
+  data.entries = data.entries.filter((e) => !e.deleted || (data.owner && !e.synced));
 }
 
 // ---------- favorites ----------
@@ -73,12 +96,14 @@ export async function getFavorites() {
 export async function addFavorite({ name, type, amount }) {
   const data = load();
   data.favorites.push({ id: newId(), name, type, amount: Number(amount) });
+  touch(data, 'favorites');
   save(data);
 }
 
 export async function deleteFavorite(id) {
   const data = load();
   data.favorites = data.favorites.filter((f) => f.id !== id);
+  touch(data, 'favorites');
   save(data);
 }
 
@@ -88,17 +113,20 @@ export async function moveFavorite(id, dir) {
   const j = i + dir;
   if (i < 0 || j < 0 || j >= data.favorites.length) return;
   [data.favorites[i], data.favorites[j]] = [data.favorites[j], data.favorites[i]];
+  touch(data, 'favorites');
   save(data);
 }
 
-// ---------- profile (nickname, frog name, tutorial) ----------
+// ---------- profile (nickname, frog name, tutorial, notification choices) ----------
 export async function getProfile() {
-  return { ...DEFAULT_PROFILE, ...load().profile };
+  const p = { ...DEFAULT_PROFILE, ...load().profile };
+  return { ...p, notify: { ...DEFAULT_NOTIFY, ...(p.notify ?? {}) } };
 }
 
 export async function saveProfile(patch) {
   const data = load();
   data.profile = { ...DEFAULT_PROFILE, ...data.profile, ...patch };
+  touch(data, 'prefs');
   save(data);
 }
 
@@ -115,23 +143,24 @@ export async function startNewSemester(nextSettings) {
     data.archive.push({
       id: newId(),
       settings: data.settings,
-      entries: data.entries.filter((e) => !e.deleted),
-      closedAt: new Date().toISOString(),
+      entries: data.entries.filter((e) => !e.deleted).map(({ synced, ...e }) => e),
+      closedAt: now(),
     });
   }
-  data.entries = [];
-  data.settings = { ...nextSettings, updatedAt: new Date().toISOString() };
+  tombstoneAll(data);
+  data.settings = { ...nextSettings, updatedAt: now() };
+  touch(data, 'settings', 'archive');
   save(data);
 }
 
 // ---------- bulk (import / export) ----------
 export async function addEntries(list) {
-  const now = new Date().toISOString();
+  const t = now();
   const data = load();
   for (const e of list) {
     data.entries.push({
-      id: newId(), type: e.type, amount: Number(e.amount), date: e.date, note: e.note ?? '',
-      createdAt: now, updatedAt: now, deleted: false, synced: false,
+      id: newId(), type: e.type, amount: Number(e.amount), date: e.date, time: e.time ?? '', note: e.note ?? '',
+      createdAt: t, updatedAt: t, deleted: false, synced: false,
     });
   }
   save(data);
@@ -139,22 +168,42 @@ export async function addEntries(list) {
 }
 
 export async function exportAll() {
-  return { app: 'pips-pond', version: 1, exportedAt: new Date().toISOString(), ...load() };
+  const { meta, pushed, owner, ...data } = load();
+  return {
+    app: 'pips-pond', version: 1, exportedAt: now(), ...data,
+    entries: data.entries.filter((e) => !e.deleted).map(({ synced, ...e }) => e),
+  };
 }
 
+// Restoring a backup replaces everything (and, when signed in, your cloud copy too).
 export async function importAll(backup) {
   if (!backup || typeof backup !== 'object' || !Array.isArray(backup.entries)) {
     throw new Error('That file isn’t a Pip’s Pond backup.');
   }
-  const { app, version, exportedAt, ...rest } = backup;
-  localStorage.setItem(KEY, JSON.stringify({ ...empty(), ...rest }));
-  window.dispatchEvent(new Event(CHANGE_EVENT));
+  const data = load();
+  tombstoneAll(data);
+  const t = now();
+  const restored = backup.entries
+    .filter((e) => e && e.id && e.type && e.date)
+    .map((e) => ({ ...e, amount: Number(e.amount), note: e.note ?? '', updatedAt: t, deleted: Boolean(e.deleted), synced: false }));
+  const ids = new Set(restored.map((e) => e.id));
+  data.entries = [...data.entries.filter((e) => !ids.has(e.id)), ...restored];
+  data.settings = backup.settings ?? null;
+  data.favorites = Array.isArray(backup.favorites) ? backup.favorites : [];
+  data.archive = Array.isArray(backup.archive) ? backup.archive : [];
+  data.profile = { ...DEFAULT_PROFILE, ...(backup.profile ?? {}) };
+  touch(data, 'settings', 'favorites', 'archive', 'prefs');
+  save(data);
 }
 
 // ---------- misc ----------
+// Erase everything. When signed in, the erase syncs to your other devices too.
 export async function resetAll() {
-  localStorage.removeItem(KEY);
-  window.dispatchEvent(new Event(CHANGE_EVENT));
+  const data = load();
+  tombstoneAll(data);
+  const fresh = { ...empty(), entries: data.entries, owner: data.owner, pushed: data.pushed };
+  touch(fresh, 'settings', 'favorites', 'archive', 'prefs');
+  save(fresh);
 }
 
 export function getTheme() {
@@ -163,4 +212,12 @@ export function getTheme() {
 
 export function setTheme(theme) {
   try { localStorage.setItem(THEME_KEY, theme); } catch { /* private mode: ignore */ }
+}
+
+// ---------- for sync (whole-store access) ----------
+export const readAll = () => load();
+export const writeAll = (data, notify = true) => save(data, notify);
+export function wipeDevice() {
+  localStorage.removeItem(KEY);
+  window.dispatchEvent(new Event(CHANGE_EVENT));
 }

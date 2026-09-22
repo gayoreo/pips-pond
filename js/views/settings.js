@@ -9,6 +9,22 @@ import { esc, count, money, plural, applyTheme } from '../ui/dom.js';
 import { infoBtn } from '../ui/info.js';
 import { setSoundEnabled, play } from '../ui/sound.js';
 import { toast } from '../ui/toast.js';
+import { cloudEnabled, userNow } from '../data/supabase.js';
+import { myProfile, signOut } from '../data/auth.js';
+import { syncNow, syncState, SYNC_EVENT } from '../data/sync.js';
+import { lockEnabled, lockSupported, enableLock, disableLock } from '../ui/lock.js';
+import { pushStatus, enablePush, disablePush, sendTestPush } from '../data/push.js';
+
+const SYNC_TEXT = {
+  idle: 'Ready.', syncing: 'Syncing…', synced: 'All synced.', offline: 'Offline — will sync when you’re back.',
+  error: 'Sync had trouble. It’ll retry.', 'signed-out': 'Signed out.',
+};
+const PUSH_TEXT = {
+  unavailable: '', 'needs-account': 'Sign in to turn on reminders.',
+  'needs-install': 'Add Pip’s Pond to your Home Screen first (Share → Add to Home Screen), then come back.',
+  unsupported: 'This browser can’t do notifications.', denied: 'Blocked. Allow them in your phone’s Settings → Pip’s Pond.',
+  off: '', on: '',
+};
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const THEMES = [['paper', 'Paper'], ['night', 'Night'], ['auto', 'Match phone']];
@@ -109,12 +125,65 @@ export async function renderSettings(root) {
   const favorites = await getFavorites();
   const rolledIn = (Number(s.swipesRolledIn) || 0) || (Number(s.pointsRolledIn) || 0);
 
+  // Account / sync / lock / notifications
+  const user = cloudEnabled ? userNow() : null;
+  const acct = user ? await myProfile().catch(() => null) : null;
+  const lockOk = await lockSupported();
+  const lockOn = lockEnabled();
+  const push = await pushStatus();
+  const notify = profile.notify ?? {};
+
   root.innerHTML = `
   <div class="settings-page stack">
     <header>
       ${saved ? '' : '<p class="eyebrow">Welcome to the Pond</p>'}
       <h1 class="page-title">${saved ? 'Settings' : 'Let’s set up your pond'}</h1>
     </header>
+
+    ${cloudEnabled ? (user ? `
+    <section class="card">
+      <h2 class="card__title">Your account</h2>
+      <p class="card__hint">${esc(user.email ?? 'Signed in')}${acct?.username ? ` · @${esc(acct.username)}` : ''}</p>
+      <p class="card__hint" id="sync-status">${esc(SYNC_TEXT[syncState.status] ?? '')}</p>
+      <div class="row">
+        <button type="button" class="btn-sketch" id="sync-now">Sync now</button>
+        <a class="btn-plain" href="#/friends">Pond friends →</a>
+      </div>
+      <button type="button" class="btn-plain btn-plain--danger" id="sign-out">Sign out of this device</button>
+    </section>
+
+    <section class="card">
+      <h2 class="card__title">Notifications ${infoBtn('Gentle reminders from Pip: a daily nudge if you forget to log, a heads-up when you go over for the week, and a warning before the semester ends. Friend snacks and cheers come through here too.')}</h2>
+      <div id="push-box">
+        ${push === 'on' ? `
+          <p class="card__hint">Reminders are on for this device.</p>
+          <label class="row"><span>Daily nudge if I forget to log</span><input type="checkbox" class="switch" data-notify="nudge"${notify.nudge !== false ? ' checked' : ''}></label>
+          <label class="field" id="nudge-time-row"${notify.nudge === false ? ' hidden' : ''}>Nudge me at<input type="time" id="nudge-time" value="${esc(notify.nudgeTime || '19:00')}"></label>
+          <label class="row"><span>Heads-up when I go over for the week</span><input type="checkbox" class="switch" data-notify="pace"${notify.pace !== false ? ' checked' : ''}></label>
+          <label class="row"><span>Semester-ending reminders</span><input type="checkbox" class="switch" data-notify="semesterEnd"${notify.semesterEnd !== false ? ' checked' : ''}></label>
+          <label class="row"><span>Friend snacks, cheers &amp; visits</span><input type="checkbox" class="switch" data-notify="friends"${notify.friends !== false ? ' checked' : ''}></label>
+          <div class="row">
+            <button type="button" class="btn-plain" id="push-test">Send a test</button>
+            <button type="button" class="btn-plain btn-plain--muted" id="push-off">Turn off on this device</button>
+          </div>
+        ` : `
+          <p class="card__hint">${esc(PUSH_TEXT[push] || 'Get gentle reminders from Pip.')}</p>
+          ${['off'].includes(push) ? '<button type="button" class="btn-sketch btn-sketch--go" id="push-on">Turn on reminders</button>' : ''}
+        `}
+      </div>
+    </section>
+
+    ${lockOk ? `
+    <section class="card">
+      <h2 class="card__title">Face ID lock ${infoBtn('Locks the app on this device behind Face ID / Touch ID (or your device PIN). You stay signed in underneath, so it’s just a privacy screen — no password needed to get back in.')}</h2>
+      <label class="row"><span>Lock this device with Face ID</span><input type="checkbox" class="switch" id="lock-toggle"${lockOn ? ' checked' : ''}></label>
+    </section>` : ''}
+    ` : `
+    <section class="card">
+      <h2 class="card__title">Sync &amp; friends</h2>
+      <p class="card__hint">Sign in to sync your pond between your phone and computer, back it up, and add pond friends.</p>
+      <a class="btn-sketch btn-sketch--go" href="#/login">Sign in or make an account</a>
+    </section>`) : ''}
 
     <section class="card">
       <h2 class="card__title">You &amp; your frog</h2>
@@ -238,7 +307,7 @@ export async function renderSettings(root) {
 
     <section class="card">
       <h2 class="card__title">iPhone shortcuts ${infoBtn('In the Shortcuts app: New Shortcut → add “Open URLs” → paste a link below. Then add it to your Home Screen, or assign it in Settings → Accessibility → Touch → Back Tap.')}</h2>
-      <p class="card__hint">Open one of these links to log without tapping through the app. Shortcuts open links in Safari, which keeps its own data until sign-in and sync arrive, so for now use them from the browser you set up in.</p>
+      <p class="card__hint">Open one of these links to log without tapping through the app. When you’re signed in, these open the app and sync straight to your account, wherever you tap them.</p>
       ${shortcutsHTML(favorites)}
     </section>` : ''}
 
@@ -342,6 +411,74 @@ export async function renderSettings(root) {
       toast('Couldn’t copy. Press and hold the link to copy it.');
     }
   }));
+
+  root.querySelector('#sync-now')?.addEventListener('click', async (e) => {
+    e.target.disabled = true;
+    await syncNow();
+    e.target.disabled = false;
+    toast(SYNC_TEXT[syncState.status] ?? 'Done.');
+  });
+
+  if (!renderSettings._syncWired) {
+    renderSettings._syncWired = true;
+    window.addEventListener(SYNC_EVENT, () => {
+      const el = document.getElementById('sync-status');
+      if (el) el.textContent = SYNC_TEXT[syncState.status] ?? '';
+    });
+  }
+
+  root.querySelector('#sign-out')?.addEventListener('click', async () => {
+    if (!confirm('Sign out and remove your pond from this device? Your data stays safe in your account.')) return;
+    const res = await signOut();
+    if (res.unsynced > 0 &&
+        confirm(`${res.unsynced} change(s) haven’t synced yet (you may be offline). Sign out anyway and lose them from this device?`)) {
+      await signOut({ force: true });
+    } else if (res.unsynced > 0) {
+      return;
+    }
+    location.hash = '#/login';
+  });
+
+  root.querySelectorAll('[data-notify]').forEach((box) => box.addEventListener('change', async () => {
+    const next = { ...(await getProfile()).notify };
+    next[box.dataset.notify] = box.checked;
+    await saveProfile({ notify: next });
+    const timeRow = root.querySelector('#nudge-time-row');
+    if (box.dataset.notify === 'nudge' && timeRow) timeRow.hidden = !box.checked;
+    syncNow();
+  }));
+  root.querySelector('#nudge-time')?.addEventListener('change', async (e) => {
+    await saveProfile({ notify: { ...(await getProfile()).notify, nudgeTime: e.target.value || '19:00' } });
+    syncNow();
+    toast('Reminder time saved.');
+  });
+
+  root.querySelector('#push-on')?.addEventListener('click', async (e) => {
+    e.target.disabled = true;
+    try { await enablePush(); toast('Reminders on!'); renderSettings(root); }
+    catch (err) { toast(err.message, 4000); e.target.disabled = false; }
+  });
+  root.querySelector('#push-off')?.addEventListener('click', async () => {
+    await disablePush();
+    toast('Reminders off for this device.');
+    renderSettings(root);
+  });
+  root.querySelector('#push-test')?.addEventListener('click', async (e) => {
+    e.target.disabled = true;
+    try { const n = await sendTestPush(); toast(n ? 'Test sent!' : 'No devices are on yet.'); }
+    catch (err) { toast(err.message, 4000); }
+    finally { e.target.disabled = false; }
+  });
+
+  root.querySelector('#lock-toggle')?.addEventListener('change', async (e) => {
+    if (e.target.checked) {
+      try { await enableLock(user?.email || 'Pip’s Pond'); toast('Face ID lock on.'); }
+      catch { e.target.checked = false; toast('Face ID setup was cancelled.'); }
+    } else {
+      disableLock();
+      toast('Face ID lock off.');
+    }
+  });
 
   root.querySelector('#reset')?.addEventListener('click', async () => {
     if (!confirm('Erase your semester, past semesters, and every entry on this device? This can’t be undone.')) return;

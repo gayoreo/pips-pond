@@ -1,6 +1,6 @@
 import { addEntry, updateEntry, deleteEntry, getSettings, getEntries, getFavorites, getProfile } from '../data/db.js';
 import { budget, exchangeAllowedOn } from '../core/calc.js';
-import { todayKey, formatShort, formatTime, toKey } from '../core/dates.js';
+import { todayKey, formatShort, formatTime, toKey, hmOf } from '../core/dates.js';
 import { startReaction } from '../pip/mood.js';
 import { play } from '../ui/sound.js';
 import { esc, money, plural } from '../ui/dom.js';
@@ -92,11 +92,10 @@ export async function openFeedSheet({ type = 'points', entry = null, date = null
     return '$' + (state.raw || '0');
   };
 
+  const sameDayCreated = entry?.createdAt && toKey(new Date(entry.createdAt)) === entry.date;
+  const whenTime = editing ? (entry.time || (sameDayCreated ? hmOf(entry.createdAt) : '')) : '';
   let heading = isToday ? feedWord : `${feedWord} · ${formatShort(day)}`;
-  if (editing) {
-    const sameDay = entry.createdAt && toKey(new Date(entry.createdAt)) === entry.date;
-    heading = `Edit · ${formatShort(day)}${sameDay ? `, ${formatTime(entry.createdAt)}` : ''}`;
-  }
+  if (editing) heading = `Edit entry`;
 
   const pillTypes = Object.keys(TYPES).filter((t) => !(editing && t === 'fix'));
   const opener = document.activeElement;
@@ -125,6 +124,10 @@ export async function openFeedSheet({ type = 'points', entry = null, date = null
       </div>
       <div class="keypad">
         ${keys.map((k) => `<button type="button" data-key="${k}" aria-label="${k === 'del' ? 'Delete digit' : k === '.' ? 'Decimal point' : k === '00' ? 'Double zero' : k}"${k === '.' ? ' class="key-dot"' : ''}>${k}</button>`).join('')}
+      </div>
+      <div class="sheet__when">
+        <label class="field">Day<input type="date" data-when-date max="${todayKey()}" value="${esc(day)}"></label>
+        <label class="field"><span class="field__label">Time <span class="muted">(optional)</span></span><input type="time" data-when-time value="${esc(whenTime)}"></label>
       </div>
       <p class="pip-note" aria-live="polite"></p>
       <button type="button" class="btn-sketch btn-sketch--go btn-sketch--big" data-save>${editing ? 'Save changes' : esc(feedWord)}</button>
@@ -200,29 +203,39 @@ export async function openFeedSheet({ type = 'points', entry = null, date = null
 
   async function save() {
     const n = value();
+    const chosenDate = q('[data-when-date]').value || day;
+    const chosenTime = q('[data-when-time]').value || '';
+    if (chosenDate > todayKey()) return toast('Nobody can eat in the future!');
+
+    // If the day changed, re-check budget/exchange rules against the new day.
+    const movedDay = chosenDate !== day;
+    const bb = movedDay
+      ? budget(settings, (await getEntries()).filter((e) => e.id !== entry?.id), chosenDate)
+      : b;
+    const canExchange = movedDay ? exchangeAllowedOn(settings, chosenDate) : exchangeOk;
 
     if (state.type === 'fix') {
-      const diff = Math.round((n - b.points.balance) * 100) / 100;
+      const diff = Math.round((n - bb.points.balance) * 100) / 100;
       close();
-      if (diff !== 0) await addEntry({ type: 'adjust-points', amount: diff, date: day });
+      if (diff !== 0) await addEntry({ type: 'adjust-points', amount: diff, date: chosenDate, time: chosenTime });
       toast(diff !== 0 ? 'Balance updated to match your card.' : 'Already matches your card!');
       return;
     }
 
     if (!(n > 0)) return toast('Enter an amount first.');
     if (state.type === 'exchange') {
-      if (!exchangeOk) return toast('Exchanges aren’t available on this day.');
-      if (b.exchanges.used + n > b.exchanges.limit && !confirm(overLimitMsg(b.exchanges.limit))) return;
+      if (!canExchange) return toast('Exchanges aren’t available on that day.');
+      if (bb.exchanges.used + n > bb.exchanges.limit && !confirm(overLimitMsg(bb.exchanges.limit))) return;
     }
 
     close();
     if (editing) {
-      await updateEntry(entry.id, { type: state.type, amount: n });
+      await updateEntry(entry.id, { type: state.type, amount: n, date: chosenDate, time: chosenTime });
       toast('Entry updated.');
       return;
     }
-    react(state.type, n, b);
-    await addEntry({ type: state.type, amount: n, date: day });
+    react(state.type, n, bb);
+    await addEntry({ type: state.type, amount: n, date: chosenDate, time: chosenTime });
     toast(`${frogName} ate ${describe(state.type, n)}!`);
   }
 

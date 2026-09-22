@@ -1,7 +1,7 @@
 import { getSettings, getEntries, saveSettings, deleteEntry } from '../data/db.js';
 import { budget, isBaseChange } from '../core/calc.js';
 import {
-  todayKey, toKey, formatLong, formatTime, monthKey, addMonths, daysInMonth, formatMonth, dayOfWeek,
+  todayKey, toKey, formatLong, formatTime, formatHM, monthKey, addMonths, daysInMonth, formatMonth, dayOfWeek,
 } from '../core/dates.js';
 import { moodFor, MOOD_LABEL } from '../pip/mood.js';
 import { esc, money, plural } from '../ui/dom.js';
@@ -32,12 +32,21 @@ function summary(list) {
   return bits.length ? `Total: ${bits.join(' · ')}` : '';
 }
 
+// The time to show: the one you set, else when it was logged (if that was the same day).
+function entryTime(e) {
+  if (e.time) return formatHM(e.time);
+  if (e.createdAt && toKey(new Date(e.createdAt)) === e.date) return formatTime(e.createdAt);
+  return '—';
+}
+
+// Sort key so timed entries sit in order and untimed ones fall back to when they were logged.
+const entryOrder = (e) => `${e.time || (e.createdAt ? toKey(new Date(e.createdAt)) === e.date ? new Date(e.createdAt).toTimeString().slice(0, 5) : '' : '')}~${e.createdAt ?? ''}`;
+
 function entryRow(e) {
-  const sameDay = e.createdAt && toKey(new Date(e.createdAt)) === e.date;
   return `
     <li>
       <button type="button" class="entry" data-entry="${esc(e.id)}">
-        <span class="entry__time">${sameDay ? formatTime(e.createdAt) : '—'}</span>
+        <span class="entry__time">${entryTime(e)}</span>
         <span class="entry__what">${esc(describe(e.type, e.amount))}</span>
         <span class="entry__edit">${isBaseChange(e.type) ? 'remove' : 'edit'}</span>
       </button>
@@ -46,7 +55,7 @@ function entryRow(e) {
 
 function dayPageHTML(settings, all, key) {
   const list = all.filter((e) => e.date === key)
-    .sort((a, c) => (a.createdAt ?? '').localeCompare(c.createdAt ?? ''));
+    .sort((a, c) => entryOrder(a).localeCompare(entryOrder(c)));
   const mood = dayMood(settings, all, key);
   const canAdd = key <= todayKey();
   return `

@@ -11,6 +11,25 @@ import { reportHTML } from '../ui/report.js';
 import { play } from '../ui/sound.js';
 import { openFeedSheet, quickLog, describe } from './feed.js';
 import { beginNewSemester } from './tutorial.js';
+import { render } from '../router.js';
+import { pingsNow, markPingsSeen, whoName, PINGS_EVENT, PING_KINDS } from '../data/social.js';
+
+const PING_LINE = {
+  snack: (who) => `${who} sent a snack! *nom nom* 🍪`,
+  cheer: (who) => `${who} is cheering you on! 📣`,
+  visit: (who) => `${who}’s frog hopped over to say hi! 🐸`,
+  dance: (who) => `${who}’s frog is doing a silly dance! 💃`,
+};
+
+function pingsHTML() {
+  const pings = pingsNow();
+  if (!pings.length) return '';
+  return `
+  <section class="pings" aria-label="Messages from friends">
+    ${pings.map((p) => `<p class="ping">${esc((PING_LINE[p.kind] ?? (() => 'A pond friend says hi!'))(whoName(p)))}</p>`).join('')}
+    <button type="button" class="btn-plain" data-pings-ok>aw, thanks!</button>
+  </section>`;
+}
 
 // Days in a row (before today) that ended on pace.
 function streakDays(settings, entries, today) {
@@ -140,6 +159,7 @@ export async function renderPond(root) {
         ${movingIn ? `<div class="leaves" aria-hidden="true">${LEAVES}</div>` : ''}
         <p class="pip-says" aria-live="polite">“${esc(line)}”</p>
       </section>
+      ${pingsHTML()}
       ${recapHTML(settings, entries, b, profile)}
       ${finalsHTML(b)}
       ${phaseHTML(b, settings, name, stats, profile)}
@@ -195,6 +215,13 @@ export async function renderPond(root) {
       return;
     }
     if (e.target.closest('[data-recap-ok]')) return saveProfile({ recapSeen: b.weekStart });
+    if (e.target.closest('[data-pings-ok]')) { play('pop'); return markPingsSeen(pingsNow().map((p) => p.id)); }
     if (e.target.closest('[data-new-semester]')) return beginNewSemester(nextSemesterDefaults(settings, entries));
   });
+
+  // Re-render the pond when friend pings arrive (while it's the open page).
+  if (!renderPond._pingWired) {
+    renderPond._pingWired = true;
+    window.addEventListener(PINGS_EVENT, () => { if (location.hash === '#/pond') render(); });
+  }
 }

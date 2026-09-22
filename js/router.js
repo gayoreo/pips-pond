@@ -5,7 +5,11 @@ import { renderFavorites } from './views/favorites.js';
 import { renderTutorial, renderSetup } from './views/tutorial.js';
 import { renderSemesters } from './views/semesters.js';
 import { renderData } from './views/data.js';
+import { renderLogin, renderResetPassword, renderMerge } from './views/login.js';
+import { renderSignup, renderFinishAccount } from './views/signup.js';
+import { renderFriends } from './views/friends.js';
 import { CHANGE_EVENT } from './data/db.js';
+import { mayUseApp } from './data/auth.js';
 
 // tab: in bottom bar · live: re-render on data change · bare: full screen, no tab bar
 const routes = {
@@ -15,8 +19,14 @@ const routes = {
   '#/favorites': { label: 'Favorites', render: renderFavorites, live: true },
   '#/semesters': { label: 'Semesters', render: renderSemesters, live: true },
   '#/data':      { label: 'Your data', render: renderData },
+  '#/friends':   { label: 'Friends',   render: renderFriends },
   '#/welcome':   { label: 'Welcome',   render: renderTutorial,  bare: true },
   '#/setup':     { label: 'New semester', render: renderSetup,  bare: true },
+  '#/login':     { label: 'Sign in',   render: renderLogin,     bare: true, open: true },
+  '#/signup':    { label: 'Sign up',   render: renderSignup,    bare: true, open: true },
+  '#/reset-password': { label: 'New password', render: renderResetPassword, bare: true, open: true },
+  '#/merge':     { label: 'Which pond?', render: renderMerge,   bare: true, open: true },
+  '#/finish-account': { label: 'Finish account', render: renderFinishAccount, bare: true, open: true },
 };
 const DEFAULT = '#/pond';
 
@@ -41,7 +51,10 @@ let queue = Promise.resolve();
 export function render() {
   queue = queue
     .then(async () => {
-      const hash = current();
+      let hash = current();
+      // Gate the app behind sign-in when accounts are on (open routes stay reachable).
+      if (!routes[hash].open && !mayUseApp()) hash = '#/login';
+      if (location.hash !== hash) history.replaceState(null, '', hash);
       renderTabs(hash);
       await routes[hash].render(app);
     })

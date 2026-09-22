@@ -270,9 +270,10 @@ export function openItemSheet(course, item) {
       }
       if (e.target.closest('[data-delete]')) {
         if (!confirm(`Delete ${it.name}?`)) return;
+        const copy = { ...it };
         deleteGradeItem(course.id, it.id);
         close();
-        toast('Deleted.');
+        toast('Deleted.', { undo: () => saveGradeItem(course.id, copy) });
         return;
       }
       if (!e.target.closest('[data-save]')) return;

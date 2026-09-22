@@ -1,4 +1,3 @@
-// @ts-nocheck
 // Fetches UVM dining hours and daily menus from the Sodexo site and saves a trimmed copy in
 // the dining_cache table, which the app reads. Runs from the database scheduler twice a day
 // (needs the x-cron-secret header). Nothing here is per-user.
@@ -136,7 +135,7 @@ async function refresh() {
   await admin.from('dining_cache').upsert({ key: 'places', data: { places, site: SITE }, updated_at: stamp });
 
   const api = await apiInfo(html);
-  const days = [dateIn(0), dateIn(1)];
+  const days = [0, 1, 2, 3, 4, 5, 6].map(dateIn); // a week, so the app still works offline
   let menus = 0;
   for (const day of days) {
     const byPlace: Record<string, unknown> = {};

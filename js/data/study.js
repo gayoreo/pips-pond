@@ -267,6 +267,10 @@ export const stopSeries = (seriesId) => change((s) => {
 // Every copy of a weekly repeat (skipped ones included), by date.
 export const seriesTasks = (s, seriesId) => s.tasks.filter((t) => t.seriesId === seriesId).sort((a, b) => a.due.localeCompare(b.due));
 
+// Puts a deleted task or block back, for undo.
+export const restoreTaskObject = (task) => change((s) => { if (task && !s.tasks.some((t) => t.id === task.id)) s.tasks.push(task); });
+export const restoreBlockObject = (block) => change((s) => { if (block && !s.blocks.some((b) => b.id === block.id)) s.blocks.push(block); });
+
 // Brings back a skipped copy of a weekly repeat.
 export const restoreTask = (id) => change((s) => {
   const t = s.tasks.find((x) => x.id === id);

@@ -1,6 +1,6 @@
 // Sends Pip's Pond push notifications. Three ways it gets called:
 //   { cron: true }  every 15 minutes by the database scheduler (needs the x-cron-secret header):
-//                   daily nudges, pace alerts and semester-end warnings
+//                   daily nudges, pace alerts, semester-end warnings and study reminders
 //   { ping: 123 }   by the app right after you send a friend a snack / cheer / visit / dance
 //   { test: true }  by the "Send a test" button in Settings
 import { createClient } from 'npm:@supabase/supabase-js@2';
@@ -76,9 +76,17 @@ const addHours = (hm: string, h: number) => {
 const money = (n: number) => `$${Math.max(0, n).toFixed(2)}`;
 const swipes = (n: number) => `${n} swipe${n === 1 ? '' : 's'}`;
 
+type StudyTask = { id: string; title: string; type: string; course: string; due: string; time: string };
+type Due = { msg: Message; mark: Record<string, unknown> };
+
 type Row = {
-  user_id: string; tz: string; sent: Record<string, string>;
-  prefs: { nudge?: boolean; nudgeTime?: string; pace?: boolean; semesterEnd?: boolean; frogName?: string; nickname?: string };
+  // deno-lint-ignore no-explicit-any
+  user_id: string; tz: string; sent: Record<string, any>;
+  prefs: {
+    nudge?: boolean; nudgeTime?: string; pace?: boolean; semesterEnd?: boolean; frogName?: string; nickname?: string;
+    study?: Record<string, unknown>;
+  };
+  study?: { tasks?: StudyTask[]; cards?: Record<string, number> } | null;
   semester: { name: string; start: string; end: string; daysOff: { from: string; to: string }[] } | null;
   snapshot: {
     weekStart: string; lastLogDay: string; pointsLeftWeek: number; swipesLeftWeek: number;
@@ -88,11 +96,12 @@ type Row = {
 };
 
 // Which reminders are due for one person right now (and what to remember so each goes out once).
-function due(row: Row): { msg: Message; mark: Record<string, string> }[] {
-  const out: { msg: Message; mark: Record<string, string> }[] = [];
+function due(row: Row): Due[] {
+  const out: Due[] = [];
   const { prefs, semester: sem, snapshot: snap, sent } = row;
-  if (!sem || !snap) return out;
   const { date, hm } = localNow(row.tz);
+  out.push(...studyDue(row, date, hm));
+  if (!sem || !snap) return out;
   const frog = prefs.frogName || 'Pip';
   const inSemester = date >= sem.start && date <= sem.end;
   const dayOff = (sem.daysOff ?? []).some((d) => date >= d.from && date <= d.to);
@@ -157,6 +166,103 @@ function due(row: Row): { msg: Message; mark: Record<string, string> }[] {
   return out;
 }
 
+// ---------- study reminders ----------
+const STUDY_DEFAULTS = { on: true, agenda: true, agendaTime: '08:00', nightBefore: true, nightTime: '20:00', examDays: 3, overdue: true, cards: true };
+const hmOr = (v: unknown, fallback: string) => (typeof v === 'string' && /^\d\d:\d\d$/.test(v) ? v : fallback);
+const nextDay = (key: string) => new Date((dayNumber(key) + 1) * 86400000).toISOString().slice(0, 10);
+const time12 = (hm: string) => {
+  const [h, m] = hm.split(':').map(Number);
+  return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
+};
+const names = (list: StudyTask[]) => {
+  const t = list.map((x) => x.title);
+  return t.length <= 2 ? t.join(' and ') : `${t.slice(0, 2).join(', ')} and ${t.length - 2} more`;
+};
+const withTimes = (list: StudyTask[]) => {
+  const shown = list.slice(0, 3).map((t) => (t.time ? `${t.title} (${time12(t.time)})` : t.title)).join(', ');
+  return list.length > 3 ? `${shown} and ${list.length - 3} more` : shown;
+};
+
+function studyDue(row: Row, date: string, hm: string): Due[] {
+  const out: Due[] = [];
+  const p = { ...STUDY_DEFAULTS, ...(row.prefs?.study ?? {}) };
+  const tasks = row.study?.tasks ?? [];
+  const cardsDue = p.cards === false ? 0
+    : Object.entries(row.study?.cards ?? {}).reduce((n, [day, c]) => (day <= date ? n + Number(c || 0) : n), 0);
+  if (p.on === false || (!tasks.length && !cardsDue)) return out;
+  const sent = row.sent ?? {};
+
+  // Morning list of what's due today (plus overdue, if they want it).
+  const agendaAt = hmOr(p.agendaTime, '08:00');
+  if (p.agenda !== false && sent.agenda !== date && hm >= agendaAt && hm < addHours(agendaAt, 3)) {
+    const today = tasks.filter((t) => t.due === date);
+    const late = p.overdue !== false ? tasks.filter((t) => t.due < date) : [];
+    const cardsLine = cardsDue ? ` Plus ${cardsDue} ${cardsDue === 1 ? 'flashcard' : 'flashcards'} to review.` : '';
+    // On an exam day, the first thing Pip says is to eat something.
+    const examToday = tasks.find((t) => t.type === 'exam' && t.due === date && t.time);
+    const eatLine = examToday ? ` Eat before ${examToday.title} at ${time12(examToday.time!)}.` : '';
+    if (today.length || late.length) {
+      out.push({
+        msg: today.length
+          ? { title: `${today.length} due today`, body: `${withTimes(today)}.${late.length ? ` Also overdue: ${names(late)}.` : ''}${eatLine}${cardsLine}`, tag: 'study-agenda' }
+          : { title: `${late.length} overdue`, body: `${names(late)}.${eatLine}${cardsLine}`, tag: 'study-agenda' },
+        mark: { agenda: date },
+      });
+    } else if (cardsDue) {
+      out.push({ msg: { title: `${cardsDue} ${cardsDue === 1 ? 'flashcard' : 'flashcards'} due`, body: `A quick review keeps them in your head.${eatLine}`, tag: 'study-agenda' }, mark: { agenda: date } });
+    } else if (eatLine) {
+      out.push({ msg: { title: 'Exam day', body: eatLine.trim(), tag: 'study-agenda' }, mark: { agenda: date } });
+    }
+  }
+
+  // Evening reminder for anything due tomorrow.
+  const nightAt = hmOr(p.nightTime, '20:00');
+  if (p.nightBefore !== false && sent.night !== date && hm >= nightAt && hm < addHours(nightAt, 3)) {
+    const soon = tasks.filter((t) => t.due === nextDay(date));
+    if (soon.length) {
+      out.push({ msg: { title: `${soon.length} due tomorrow`, body: `${withTimes(soon)}.`, tag: 'study-night' }, mark: { night: date } });
+    }
+  }
+
+  // One heads-up per exam, the chosen number of days before.
+  const lead = Number(p.examDays) || 0;
+  if (lead > 0 && hm >= '09:00' && hm < '21:00') {
+    const seen = (sent.exams ?? {}) as Record<string, string>;
+    for (const t of tasks) {
+      if (t.type !== 'exam') continue;
+      const d = dayNumber(t.due) - dayNumber(date);
+      if (d < 0 || d > lead || seen[t.id] === t.due) continue;
+      const when = t.time ? ` at ${time12(t.time)}` : '';
+      out.push({
+        msg: {
+          title: d === 0 ? `${t.title} is today` : `${t.title} in ${d} ${d === 1 ? 'day' : 'days'}`,
+          body: `${t.course ? `${t.course}${when}. ` : when ? `Starts${when}. ` : ''}Time to study.`,
+          tag: `exam-${t.id}`,
+        },
+        mark: { exams: { [t.id]: t.due } },
+      });
+    }
+  }
+  return out;
+}
+
+// Combines what was just sent with what was sent before, and forgets exams that are gone.
+// deno-lint-ignore no-explicit-any
+function mergeSent(prev: Record<string, any> | null, list: Due[], row: Row) {
+  const next = { ...(prev ?? {}) };
+  for (const d of list) {
+    for (const [k, v] of Object.entries(d.mark)) {
+      if (k === 'exams') next.exams = { ...(next.exams ?? {}), ...(v as Record<string, string>) };
+      else next[k] = v;
+    }
+  }
+  if (next.exams) {
+    const live = new Set((row.study?.tasks ?? []).map((t) => t.id));
+    next.exams = Object.fromEntries(Object.entries(next.exams).filter(([id]) => live.has(id)));
+  }
+  return next;
+}
+
 async function runCron() {
   const { data: subs } = await admin.from('push_subscriptions').select('user_id');
   const users = [...new Set((subs ?? []).map((s) => s.user_id))];
@@ -167,8 +273,7 @@ async function runCron() {
       const list = due(row);
       if (!list.length) continue;
       // Mark first so a slow run can't send the same reminder twice.
-      const mark = Object.assign({}, ...list.map((d) => d.mark));
-      await admin.from('notify_state').update({ sent: { ...row.sent, ...mark } }).eq('user_id', row.user_id);
+      await admin.from('notify_state').update({ sent: mergeSent(row.sent, list, row) }).eq('user_id', row.user_id);
       for (const d of list) sent += await pushTo(row.user_id, d.msg);
     }
   }
@@ -181,6 +286,7 @@ const PING_TEXT: Record<string, (who: string, theirFrog: string, yourFrog: strin
   visit: (who, _theirFrog, yourFrog) => ({ title: `${yourFrog} is visiting!`, body: `${who}’s frog hopped over to your pond.`, tag: 'friends' }),
   dance: (who, theirFrog, yourFrog) => ({ title: `${yourFrog} did a silly dance!`, body: `${who}’s frog is dancing for ${theirFrog}.`, tag: 'friends' }),
   study: (who, _theirFrog, _yourFrog, note) => ({ title: `${who} wants to study together`, body: note ? `How about ${note}?` : 'Open the app to answer.', tag: 'friends' }),
+  meal: (who, _theirFrog, _yourFrog, note) => ({ title: `${who} wants to grab a meal`, body: note ? `How about ${note}?` : 'Open the app to answer.', tag: 'friends' }),
 };
 
 async function sendPing(req: Request, pingId: number) {

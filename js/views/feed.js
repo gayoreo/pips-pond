@@ -1,4 +1,4 @@
-import { addEntry, updateEntry, deleteEntry, getSettings, getEntries, getFavorites, getProfile } from '../data/db.js';
+import { addEntry, updateEntry, deleteEntry, restoreEntry, getSettings, getEntries, getFavorites, getProfile } from '../data/db.js';
 import { budget, exchangeAllowedOn } from '../core/calc.js';
 import { todayKey, formatShort, formatTime, toKey, hmOf } from '../core/dates.js';
 import { startReaction } from '../pip/mood.js';
@@ -48,8 +48,8 @@ export async function quickLog({ type, amount = 1, label } = {}) {
   if (type === 'guest' && b.guests.left - amount < 0 &&
       !confirm(`That's more than your ${b.guests.total} guest passes. Log it anyway?`)) return;
   react(type, amount, b);
-  await addEntry({ type, amount, date: today });
-  toast(`${frogName} ate ${label ?? describe(type, amount)}!`);
+  const entry = await addEntry({ type, amount, date: today });
+  toast(`${frogName} ate ${label ?? describe(type, amount)}!`, { undo: () => deleteEntry(entry.id) });
 }
 
 export async function openFeedSheet({ type = 'points', entry = null, date = null } = {}) {

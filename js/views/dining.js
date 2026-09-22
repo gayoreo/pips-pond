@@ -1,8 +1,8 @@
 // Dining tab: what's open now, today's and tomorrow's menus, favorites, diet and allergen filters,
 // where to eat in your next free time between classes, and one-tap logging.
-import { loadDining, cachedDining, hoursOn, statusAt, mealNow } from '../data/dining.js';
+import { loadDining, cachedDining, hoursOn, statusAt, mealNow, WEEK } from '../data/dining.js';
 import { getProfile, saveProfile } from '../data/db.js';
-import { getStudy, dayItems, freeGaps, studyHours } from '../data/study.js';
+import { getStudy, dayItems, freeGaps, studyHours, liveTasks, examWindow } from '../data/study.js';
 import { cloudEnabled } from '../data/supabase.js';
 import { todayKey, addDays, formatHM, ago } from '../core/dates.js';
 import { esc } from '../ui/dom.js';
@@ -81,6 +81,26 @@ function placeCard(place, menus, p, day, isToday) {
   </li>`;
 }
 
+// On an exam day: eat before it, and here's what's open in time.
+function examMealHTML(places) {
+  const today = todayKey();
+  const s = getStudy();
+  const now = nowHM();
+  const exam = liveTasks(s)
+    .filter((t) => t.type === 'exam' && t.due === today && examWindow(t))
+    .map((t) => ({ t, w: examWindow(t) }))
+    .filter(({ w }) => w.start > now)
+    .sort((a, b) => a.w.start.localeCompare(b.w.start))[0];
+  if (!exam) return '';
+  const eatBy = `${String(Math.max(0, Number(exam.w.start.slice(0, 2)) - 1)).padStart(2, '0')}:${exam.w.start.slice(3)}`;
+  const open = places.filter((pl) => statusAt(pl, today, now > eatBy ? now : eatBy).open);
+  return `
+    <section class="card dn-gap">
+      <p class="fw-sub">📝 ${esc(exam.t.title)} at ${esc(formatHM(exam.w.start))}</p>
+      <p>Eat something first. ${open.length ? `Open before then: ${open.slice(0, 4).map((pl) => esc(pl.name)).join(', ')}.` : 'Nothing is open before then, so grab something on the way.'}</p>
+    </section>`;
+}
+
 // Your next free stretch today (from Study) and which places are open at its start.
 function betweenClassesHTML(places, profile) {
   const today = todayKey();
@@ -137,6 +157,7 @@ export async function renderDining(root) {
       <button type="button" data-day="0" aria-pressed="${isToday}">Today</button>
       <button type="button" data-day="1" aria-pressed="${!isToday}">Tomorrow</button>
     </div>
+    ${isToday ? examMealHTML(data.places) : ''}
     ${isToday ? betweenClassesHTML(data.places, profile) : ''}
     <div class="row">
       <label class="field grow"><span class="field__label">Search ${isToday ? 'today’s' : 'tomorrow’s'} menus</span><input type="search" name="q" autocomplete="off" value="${esc(view.q)}" placeholder="pizza, tofu, waffles"></label>
@@ -182,7 +203,7 @@ export async function renderDining(root) {
   if (!view.fetched && cloudEnabled) {
     view.fetched = true;
     try {
-      const fresh = await loadDining([today, addDays(today, 1)]);
+      const fresh = await loadDining(Array.from({ length: WEEK }, (_, i) => addDays(today, i)));
       if (JSON.stringify(fresh) !== JSON.stringify(data) && location.hash === '#/dining') renderDining(root);
     } catch {
       view.fetched = false;

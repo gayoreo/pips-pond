@@ -14,7 +14,8 @@ import { beginNewSemester } from './tutorial.js';
 import { render } from '../router.js';
 import { pingsNow, markPingsSeen, whoName, PINGS_EVENT, PING_KINDS } from '../data/social.js';
 import { cloudEnabled, userNow } from '../data/supabase.js';
-import { studyOverride } from '../data/study.js';
+import { studyOverride, getStudy, studyStatus, liveTasks } from '../data/study.js';
+import { reviewStreak, totalDue } from '../data/decks.js';
 import { studyPeekHTML } from './study.js';
 
 // One-time card nudging local-only users to make an account (for sync + friends + reminders).
@@ -36,6 +37,7 @@ const PING_LINE = {
   visit: (who) => `${who}’s frog hopped over to say hi! 🐸`,
   dance: (who) => `${who}’s frog is doing a silly dance! 💃`,
   study: (who, p) => `${who} wants to study together${p?.note ? ` ${p.note}` : ''}! 📖`,
+  meal: (who, p) => `${who} wants to grab a meal${p?.note ? ` ${p.note}` : ''}! 🍽`,
 };
 
 function pingsHTML() {
@@ -46,6 +48,24 @@ function pingsHTML() {
     ${pings.map((p) => `<p class="ping">${esc((PING_LINE[p.kind] ?? (() => 'A pond friend says hi!'))(whoName(p), p))}</p>`).join('')}
     <button type="button" class="btn-plain" data-pings-ok>aw, thanks!</button>
   </section>`;
+}
+
+// Pip notices how the week has actually been going: a run of exams, a review streak,
+// a stretch of staying on pace, or a genuinely clear day. Returns a line or nothing.
+function memoryLine(today, streak, frogName) {
+  const s = getStudy();
+  const st = studyStatus(s, today);
+  const exams = liveTasks(s).filter((t) => t.type === 'exam' && !t.done && t.due >= today && t.due <= addDays(today, 7));
+  const cards = reviewStreak(today);
+  if (exams.length >= 2) return `That's ${exams.length} exams in one week. One at a time, and I'll keep the pond warm.`;
+  if (st.overdue.length >= 3) return `${st.overdue.length} things slipped. Pick the smallest one and we're moving again.`;
+  if (cards >= 5) return `Flashcards ${cards} days running. That's the part most people skip.`;
+  if (streak >= 7) return `A whole week on pace. ${frogName} is impressed, and ${frogName} is hard to impress.`;
+  if (exams.length === 1 && st.dueToday.length === 0 && !st.overdue.length) {
+    return `Nothing due today, one exam later this week. Good day to get ahead.`;
+  }
+  if (!liveTasks(s).length || (!st.open.length && s.courses.length)) return '';
+  return '';
 }
 
 // Days in a row (before today) that ended on pace.
@@ -154,9 +174,11 @@ export async function renderPond(root) {
   const movingIn = sessionStorage.getItem('pond:movein') === '1';
   if (movingIn) sessionStorage.removeItem('pond:movein');
 
+  // Every few days, Pip says something about the week instead of the usual line.
+  const memory = school ? '' : (Number(today.slice(-2)) % 3 === 0 ? memoryLine(today, streak, profile.frogName) : '');
   const line = movingIn
     ? `Welcome home${profile.nickname ? `, ${profile.nickname}` : ''}! This is our pond now.`
-    : school?.line ?? pipLine(mood, b, {
+    : memory || school?.line || pipLine(mood, b, {
         seed: entries.length + Number(today.slice(-2)),
         nick: profile.nickname,
         streak,

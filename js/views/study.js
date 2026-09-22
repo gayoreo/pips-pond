@@ -4,7 +4,8 @@ import {
   getStudy, addCourse, updateCourse, deleteCourse, addTask, updateTask, deleteTask, toggleDone,
   addSeries, stopSeries, ensureSeries, liveTasks, studyStatus, studyPipLine, dueLabel, studyNotifyPrefs,
   dayItems, freeGaps, timeRange, saveBlock, deleteBlock, TASK_TYPES, BLOCK_KINDS, COURSE_COLORS,
-  studyHours, seriesTasks, restoreTask, updateSeries, ensureCourseSemesters, needsScore, skipScore, coursesForSemester,
+  studyHours, seriesTasks, restoreTask, restoreTaskObject, restoreBlockObject, updateSeries, ensureCourseSemesters,
+  needsScore, skipScore, coursesForSemester,
 } from '../data/study.js';
 import { courseGrade, gradingOf, gpaOf, fmtPct, fmtGpa, DEFAULT_GPA_SCALE } from '../core/grades.js';
 import { openCourse, scoreTask } from './course.js';
@@ -109,6 +110,7 @@ function plannerHTML(s, today, profile) {
   return `
     ${todayScheduleHTML(s, today)}
     ${chips}
+    ${nextExamLine(s, today)}
     ${groupHTML('Overdue', open.filter((t) => t.due < today), courses, today, 'plan-group--late')}
     ${groupHTML('Today', open.filter((t) => t.due === today), courses, today)}
     ${groupHTML('Tomorrow', open.filter((t) => t.due === tomorrow), courses, today)}
@@ -585,11 +587,13 @@ export function openTaskSheet(task, after = () => {}) {
       }
       const skip = t.closest('[data-skip]');
       if (skip) {
+        const gone = getStudy().tasks.find((x) => x.id === skip.dataset.skip);
         deleteTask(skip.dataset.skip);
         after();
-        if (skip.dataset.skip === task.id) { close(); return toast('Deleted that date.'); }
+        const undo = { undo: () => { restoreTask(gone.id); after(); } };
+        if (skip.dataset.skip === task.id) { close(); return toast('Deleted that date.', undo); }
         q('[data-series]').innerHTML = seriesListHTML(task.seriesId, task.id);
-        return toast('Deleted that date.');
+        return toast('Deleted that date.', undo);
       }
       const restore = t.closest('[data-restore]');
       if (restore) {
@@ -614,10 +618,11 @@ export function openTaskSheet(task, after = () => {}) {
 
       if (t.closest('[data-delete]')) {
         if (!confirm(`Delete “${task.title}”?`)) return;
+        const copy = { ...task };
         deleteTask(task.id);
         close();
         after();
-        return toast('Deleted.');
+        return toast('Deleted.', { undo: () => { copy.seriesId ? restoreTask(copy.id) : restoreTaskObject(copy); after(); } });
       }
       if (t.closest('[data-stop]')) {
         if (!confirm(`Stop repeating “${task.title}”? Upcoming copies are removed. Finished ones stay.`)) return;
@@ -749,9 +754,10 @@ function openBlockSheet(block, preset = {}) {
       if (drop) { drop.closest('.date-row').remove(); return; }
       if (e.target.closest('[data-delete]')) {
         if (!confirm('Delete this block?')) return;
+        const copy = { ...block };
         deleteBlock(block.id);
         close();
-        toast('Deleted.');
+        toast('Deleted.', { undo: () => restoreBlockObject(copy) });
         return;
       }
       if (!e.target.closest('[data-save]')) return;
@@ -933,6 +939,17 @@ async function openStudySettings() {
       }
     });
   });
+}
+
+// The next exam, in one line. Small on purpose.
+export function nextExamLine(s = getStudy(), today = todayKey()) {
+  const exam = liveTasks(s).filter((t) => t.type === 'exam' && !t.done && t.due >= today).sort(byDue)[0];
+  if (!exam) return '';
+  const days = Math.round((fromKey(exam.due) - fromKey(today)) / 86400000);
+  const when = days === 0 ? (exam.time ? `today ${formatHM(exam.time)}` : 'today') : days === 1 ? 'tomorrow' : `in ${days} days`;
+  const course = s.courses.find((c) => c.id === exam.courseId);
+  const due = totalDue(today);
+  return `<p class="exam-line"><b>📝 ${esc(exam.title)}</b> ${esc(when)}${course ? ` <span class="muted">${esc(course.name)}</span>` : ''}${due ? ` <span class="muted">· ${due} cards due</span>` : ''}</p>`;
 }
 
 // ---------- small "coming up" card for the Pond ----------

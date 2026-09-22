@@ -1099,3 +1099,10 @@ body.is-locked { overflow: hidden; }
 :root { --kind-office: #D9D2F0; --kind-ta: #D6ECE8; }
 .wk-item--office, .wk-item--ta { opacity: 0.85; }
 .wk-item--office .wk-item__title, .wk-item--ta .wk-item__title { font-weight: 600; }
+
+/* Undo inside a toast */
+.toast--undo { display: flex; align-items: center; gap: 10px; }
+.toast__undo { background: none; border: 0; border-bottom: 2px solid currentColor; padding: 0 2px; font: inherit; font-weight: 800; color: inherit; cursor: pointer; }
+
+/* One-line exam countdown */
+.exam-line { margin: 0; padding: 6px 10px; border-left: 6px solid var(--kind-exam); background: var(--card); border-radius: var(--wobble-2); font-size: 15px; }

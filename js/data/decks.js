@@ -86,6 +86,13 @@ export const updateCard = (deckId, cardId, patch) => change((st) => {
   if (c) Object.assign(c, patch);
 });
 
+// Puts a deleted card or deck back, for undo.
+export const restoreCard = (deckId, card) => change((st) => {
+  const d = find(st, deckId);
+  if (d && card && !d.cards.some((c) => c.id === card.id)) d.cards.push(card);
+});
+export const restoreDeck = (deck) => change((st) => { if (deck && !st.decks.some((d) => d.id === deck.id)) st.decks.push(deck); });
+
 export const deleteCard = (deckId, cardId) => change((st) => {
   const d = find(st, deckId);
   if (d) d.cards = d.cards.filter((c) => c.id !== cardId);

@@ -2,7 +2,7 @@
 import {
   getDeck, updateDeck, deleteDeck, resetProgress, addCards, updateCard, deleteCard, dueCards, gradeCard, markReviewed,
   reviewStreak, buildQuiz, checkTyped, checkAny, saveQuizResult, parseCardLines, parseCardCSV, MAX_BOX,
-  cardFace, clozePrompt, clozeFilled, answerList, deckStats, isCloze,
+  cardFace, clozePrompt, clozeFilled, answerList, deckStats, isCloze, restoreCard, restoreDeck,
 } from '../data/decks.js';
 import { shareDeck, unshareDeck, fetchShared, importShared, shareSize, SHARE_LIMIT } from '../data/share.js';
 import { userNow } from '../data/supabase.js';
@@ -180,8 +180,10 @@ function openCardSheet(deckIdValue, card) {
       }
       if (e.target.closest('[data-delete]')) {
         if (!confirm('Delete this card?')) return;
+        const copy = { ...card };
         deleteCard(deckIdValue, card.id);
         close();
+        toast('Card deleted.', { undo: () => restoreCard(deckIdValue, copy) });
         return;
       }
       if (!e.target.closest('[data-save]')) return;
@@ -394,9 +396,11 @@ function openDeckSettings(id) {
         toast('Progress reset.');
       } else if (e.target.closest('[data-delete]')) {
         if (!confirm(`Delete ${deck.name} and all ${deck.cards.length} cards?`)) return;
+        const copy = JSON.parse(JSON.stringify(deck));
         close();
         deleteDeck(id);
         backToDecks();
+        toast(`${deck.name} deleted.`, { undo: () => restoreDeck(copy) });
       }
     });
   });

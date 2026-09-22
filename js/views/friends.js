@@ -10,6 +10,7 @@ import {
   getStudy, dayItems, freeGaps, sharedOn, nowFor, timeRange, studyHours, shareRulesOf, SHARE_CATS,
 } from '../data/study.js';
 import { openSheet } from '../ui/sheet.js';
+import { cachedDining, statusAt } from '../data/dining.js';
 import { frogSVG } from '../pip/frog.js';
 import { MOOD_LABEL } from '../pip/mood.js';
 import { formatShort, ago, todayKey, addDays, fromKey, formatHM, hmOf } from '../core/dates.js';
@@ -71,6 +72,25 @@ function dayHTML(f, sched, day, hours) {
       : `<p class="card__hint">No free hour together between ${formatHM(hours.from)} and ${formatHM(hours.to)}.</p>`}`;
 }
 
+// Up to 3 upcoming times you're both free and somewhere is open, for a meal invite.
+function mealSlots(sched, hours) {
+  const places = cachedDining()?.places ?? [];
+  if (!places.length) return [];
+  const today = todayKey();
+  const out = [];
+  for (let i = 0; i < 3 && out.length < 3; i++) {
+    const day = addDays(today, i);
+    for (const g of bothFree(sched, day, hours)) {
+      if (out.length >= 3) break;
+      const open = places.filter((pl) => statusAt(pl, day, g.start).open && pl.menuId);
+      if (!open.length) continue;
+      const when = i === 0 ? 'today' : i === 1 ? 'tomorrow' : `on ${fromKey(day).toLocaleDateString(undefined, { weekday: 'long' })}`;
+      out.push(`${when} at ${formatHM(g.start)}, ${open[0].name}`);
+    }
+  }
+  return out;
+}
+
 // Up to 4 upcoming times you're both free, for a study invite.
 function studySlots(sched, hours) {
   const today = todayKey();
@@ -111,6 +131,7 @@ async function openFriendSheet(f, rerender) {
   const days = Array.from({ length: 7 }, (_, i) => addDays(today, i));
   const now = sched ? nowInfo(sched) : null;
   const slots = sched ? studySlots(sched, hours) : [];
+  const meals = sched ? mealSlots(sched, hours) : [];
 
   const html = `
     <div class="fs-head">
@@ -132,6 +153,15 @@ async function openFriendSheet(f, rerender) {
       <div class="row">
         <label class="field grow"><span class="field__label">When <span class="muted">(optional)</span></span><input name="studyNote" maxlength="40" autocomplete="off" placeholder="${slots.length ? 'tap a time above or type one' : 'after lunch, 3 PM…'}"></label>
         <button type="button" class="btn-sketch btn-sketch--small btn-sketch--go" data-invite>ask</button>
+      </div>
+    </section>
+
+    <section class="fs-section">
+      <p class="fw-sub">🍽 Grab a meal?</p>
+      ${meals.length ? `<div class="chip-row">${meals.map((sl) => `<button type="button" class="fw-day" data-mealslot="${esc(sl)}">${esc(sl)}</button>`).join('')}</div>` : ''}
+      <div class="row">
+        <label class="field grow"><span class="field__label">When <span class="muted">(optional)</span></span><input name="mealNote" maxlength="40" autocomplete="off" placeholder="${meals.length ? 'tap a time above or type one' : 'lunch at Central, 12:30…'}"></label>
+        <button type="button" class="btn-sketch btn-sketch--small btn-sketch--go" data-meal-invite>ask</button>
       </div>
     </section>
 
@@ -174,6 +204,20 @@ async function openFriendSheet(f, rerender) {
       }
       const slot = t.closest('[data-slot]');
       if (slot) { q('[name="studyNote"]').value = slot.dataset.slot; return; }
+      const mslot = t.closest('[data-mealslot]');
+      if (mslot) { q('[name="mealNote"]').value = mslot.dataset.mealslot; return; }
+      if (t.closest('[data-meal-invite]')) {
+        const btn = t.closest('[data-meal-invite]');
+        btn.disabled = true;
+        try {
+          await sendPing(f.id, 'meal', q('[name="mealNote"]').value.trim() || null);
+          play('pop');
+          toast('Meal invite sent!');
+          q('[name="mealNote"]').value = '';
+        } catch (er) { toast(er.message); }
+        finally { btn.disabled = false; }
+        return;
+      }
       if (t.closest('[data-invite]')) {
         const btn = t.closest('[data-invite]');
         btn.disabled = true;

@@ -9,6 +9,8 @@ export function cachedDining() {
   try { return JSON.parse(localStorage.getItem(CACHE_KEY)) || null; } catch { return null; }
 }
 
+export const WEEK = 7; // days of menus kept on the device
+
 // { places: [...], menus: { 'YYYY-MM-DD': { slug: [meals] } }, updatedAt }
 export async function loadDining(days) {
   const old = cachedDining() ?? { places: [], menus: {}, updatedAt: '' };

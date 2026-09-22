@@ -79,6 +79,11 @@ export async function deleteEntry(id) {
   return updateEntry(id, { deleted: true });
 }
 
+// Puts a logged entry back, for undo.
+export async function restoreEntry(id) {
+  return updateEntry(id, { deleted: false });
+}
+
 // Marks every current entry as deleted (kept as a "tombstone" so other devices delete it too).
 function tombstoneAll(data) {
   const t = now();

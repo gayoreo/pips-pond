@@ -193,3 +193,16 @@ export function parseCardCSV(text) {
 
 // For the reminder server: how many cards come due on each of the next two weeks' days.
 // Anything already due is counted on
+
+export function cardsDueMap(data) {
+  const today = todayKey();
+  const until = addDays(today, 14);
+  const map = {};
+  for (const d of norm(data.decks).decks) {
+    for (const c of d.cards) {
+      const day = !c.due || c.due < today ? today : c.due;
+      if (day <= until) map[day] = (map[day] || 0) + 1;
+    }
+  }
+  return map;
+}

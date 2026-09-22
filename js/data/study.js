@@ -371,3 +371,37 @@ export function studyOverride(profile, budgetMood, today = todayKey()) {
   if (st.mood === 'happy' || (RANK[st.mood] ?? 0) <= (RANK[budgetMood] ?? 0)) return null;
   return { mood: st.mood, line: studyPipLine(st, today) };
 }
+
+// ---------- sharing your class schedule with friends ----------
+// Only class and lab times go out: course name, code, color, days and times.
+// Places, homework and your own calendar blocks never leave your phone.
+export function scheduleForFriends(data) {
+  const s = norm(data.study);
+  const out = [];
+  for (const c of s.courses) {
+    for (const m of c.meetings ?? []) {
+      if (!m.days?.length || !m.start) continue;
+      out.push({ name: c.name, code: c.code || '', color: c.color, kind: m.kind === 'lab' ? 'lab' : 'class', days: m.days, start: m.start, end: m.end || '' });
+    }
+  }
+  return out.slice(0, 80);
+}
+
+// A friend's shared classes on one day, earliest first.
+export function sharedOn(meetings, day) {
+  const dow = dayOfWeek(day);
+  return (Array.isArray(meetings) ? meetings : [])
+    .filter((m) => Array.isArray(m.days) && m.days.includes(dow) && /^\d\d:\d\d$/.test(m.start))
+    .map((m) => ({ kind: m.kind === 'lab' ? 'lab' : 'class', name: String(m.name || 'Class'), code: String(m.code || ''), color: m.color, start: m.start, end: /^\d\d:\d\d$/.test(m.end) ? m.end : '' }))
+    .sort((a, b) => a.start.localeCompare(b.start));
+}
+
+// Where someone is at `hm` given that day's items: { busy, item, until }.
+export function nowFor(items, hm) {
+  const cur = toMin(hm);
+  const endOf = (i) => (i.end ? toMin(i.end) : toMin(i.start) + 60);
+  const on = items.find((i) => toMin(i.start) <= cur && cur < endOf(i));
+  if (on) return { busy: true, item: on, until: toHM(endOf(on)) };
+  const next = items.find((i) => toMin(i.start) > cur);
+  return { busy: false, item: null, until: next ? next.start : '' };
+}

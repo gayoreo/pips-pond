@@ -982,3 +982,14 @@ body.is-locked { overflow: hidden; }
 .session--end .frog svg { width: 100%; height: 100%; }
 .session--end .stack { width: 100%; max-width: 360px; }
 .missed-list { text-align: left; font-size: 15px; padding-left: 18px; }
+
+/* ==================== Friends: shared schedules ==================== */
+.friend__now { font-size: 13px; font-weight: 700; }
+.fw-days { margin-bottom: 6px; }
+.fw-day { border: 2px solid var(--ink); border-radius: 999px; background: var(--card); padding: 4px 12px; font: inherit; font-weight: 700; color: inherit; }
+.fw-day[aria-pressed="true"] { background: var(--yellow-note); border-width: 3px; }
+.fw-sub { margin: 12px 0 4px; font-weight: 800; }
+.fw-list, .fw-free { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.fw-list li { display: flex; gap: 10px; align-items: baseline; padding-left: 8px; border-left: 6px solid var(--course); font-size: 15px; }
+.fw-time { flex: none; min-width: 128px; font-weight: 800; font-size: 13px; }
+.fw-free li { background: var(--pond); border: 2px solid var(--ink); border-radius: 12px; padding: 6px 12px; font-weight: 700; }

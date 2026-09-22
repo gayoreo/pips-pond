@@ -2,11 +2,14 @@
 import { userNow, myProfile, appUrl, pendingInvite, clearPendingInvite } from '../data/auth.js';
 import {
   refreshFriends, friendsNow, sendFriendRequest, respondToRequest, removeFriend, sendPing,
-  PING_KINDS, whoName, FRIENDS_EVENT,
+  PING_KINDS, whoName, FRIENDS_EVENT, refreshSchedules, scheduleOf,
 } from '../data/social.js';
+import { getProfile, saveProfile } from '../data/db.js';
+import { getStudy, dayItems, freeGaps, sharedOn, nowFor, timeRange } from '../data/study.js';
+import { openSheet } from '../ui/sheet.js';
 import { frogSVG } from '../pip/frog.js';
 import { MOOD_LABEL } from '../pip/mood.js';
-import { formatShort, ago } from '../core/dates.js';
+import { formatShort, ago, todayKey, addDays, fromKey, formatHM, hmOf } from '../core/dates.js';
 import { esc } from '../ui/dom.js';
 import { toast } from '../ui/toast.js';
 import { play } from '../ui/sound.js';
@@ -29,13 +32,68 @@ function friendCard(f) {
       <b class="hand">${esc(whoName(f))}</b>
       <span class="muted">${esc(f.frog_name || 'Pip')} · ${MOOD_LABEL[mood] ?? mood}</span>
       ${f.mood_at ? `<span class="friend__stamp">as of ${esc(ago(f.mood_at))}</span>` : ''}
+      ${scheduleOf(f.id) ? `<span class="friend__now">📚 ${esc(nowLine(scheduleOf(f.id)))}</span>` : ''}
     </div>
     <div class="friend__acts">
       ${Object.entries(PING_KINDS).map(([k, v]) =>
         `<button type="button" class="ping-btn" data-ping="${k}" data-id="${esc(f.id)}" title="${v.verb}" aria-label="${v.verb}: ${esc(whoName(f))}">${PING_EMOJI[k]}</button>`).join('')}
+      ${scheduleOf(f.id) ? `<button type="button" class="ping-btn" data-week="${esc(f.id)}" title="Their week" aria-label="See ${esc(whoName(f))}’s week">📅</button>` : ''}
       <button type="button" class="btn-plain btn-plain--muted" data-remove="${esc(f.id)}" aria-label="Remove ${esc(whoName(f))}">✕</button>
     </div>
   </li>`;
+}
+
+// ---------- shared class schedules ----------
+const safeColor = (c) => (/^#[0-9a-f]{6}$/i.test(c) ? c : '#E3DAC4');
+const nowHM = () => hmOf(new Date().toISOString());
+
+function nowLine(sched) {
+  const items = sharedOn(sched, todayKey());
+  if (!items.length) return 'No classes today';
+  const n = nowFor(items, nowHM());
+  if (n.busy) return `In ${n.item.code || n.item.name} until ${formatHM(n.until)}`;
+  return n.until ? `Free until ${formatHM(n.until)}` : 'Done with classes today';
+}
+
+function dayHTML(f, sched, day) {
+  const theirs = sharedOn(sched, day);
+  let both = freeGaps([...dayItems(getStudy(), day), ...theirs]);
+  if (day === todayKey()) { const now = nowHM(); both = both.filter((g) => g.end > now); }
+  const name = esc(f.nickname || f.username || 'Their');
+  return `
+    <p class="fw-sub">${name}’s classes</p>
+    ${theirs.length
+      ? `<ul class="fw-list">${theirs.map((i) => `
+          <li style="--course:${safeColor(i.color)}">
+            <span class="fw-time">${esc(timeRange(i))}</span>
+            <span>${esc(i.name)}${i.kind === 'lab' ? ' <span class="muted">lab</span>' : ''}</span>
+          </li>`).join('')}</ul>`
+      : '<p class="card__hint">No classes this day.</p>'}
+    <p class="fw-sub">Free at the same time</p>
+    ${both.length
+      ? `<ul class="fw-free">${both.map((g) => `<li>🐸 ${formatHM(g.start)} to ${formatHM(g.end)}</li>`).join('')}</ul>`
+      : '<p class="card__hint">No free hour together between 8 AM and 10 PM.</p>'}
+    <p class="card__hint">Uses their classes plus your own classes and calendar. They might have other plans, so check with them.</p>`;
+}
+
+function openFriendWeek(f) {
+  const sched = scheduleOf(f.id);
+  if (!sched) return toast('They stopped sharing their schedule.');
+  const today = todayKey();
+  const days = Array.from({ length: 7 }, (_, i) => addDays(today, i));
+  const label = (d, i) => (i === 0 ? 'Today' : fromKey(d).toLocaleDateString(undefined, { weekday: 'short' }));
+  const html = `
+    <div class="chip-row fw-days">${days.map((d, i) =>
+      `<button type="button" class="fw-day" data-day="${d}" aria-pressed="${i === 0}">${label(d, i)}</button>`).join('')}</div>
+    <div class="fw-body">${dayHTML(f, sched, today)}</div>`;
+  openSheet(`${whoName(f)}’s week`, html, (sheet) => {
+    sheet.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-day]');
+      if (!b) return;
+      sheet.querySelectorAll('[data-day]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      sheet.querySelector('.fw-body').innerHTML = dayHTML(f, sched, b.dataset.day);
+    });
+  });
 }
 
 const PING_EMOJI = { snack: '🍪', cheer: '📣', visit: '🐸', dance: '💃' };
@@ -67,6 +125,8 @@ export async function renderFriends(root) {
   const friends = list.filter((f) => f.status === 'friend');
   const incoming = list.filter((f) => f.status === 'incoming');
   const outgoing = list.filter((f) => f.status === 'outgoing');
+  const me = await getProfile();
+  const hasClasses = getStudy().courses.some((c) => c.meetings?.length);
   const prefill = pendingInvite();
   if (prefill) clearPendingInvite();
 
@@ -93,13 +153,21 @@ export async function renderFriends(root) {
       <p class="form-error" role="alert"></p>
     </section>
 
+    <section class="card">
+      <h2 class="card__title">Class schedule</h2>
+      <label class="row"><span>Share my class and lab times with friends</span><input type="checkbox" class="switch" id="share-schedule"${me.shareSchedule ? ' checked' : ''}></label>
+      <p class="card__hint">${hasClasses
+        ? 'Friends see course names and times only. Places, homework and your own calendar blocks stay private.'
+        : 'Add class times in Study first, then friends can see when you’re free.'}</p>
+    </section>
+
     ${incoming.length ? `<section class="card"><h2 class="card__title">Friend requests</h2><ul class="reqs">${incoming.map(requestCard).join('')}</ul></section>` : ''}
 
     <section class="card">
       <h2 class="card__title">Your pond friends ${friends.length ? `<span class="muted">(${friends.length})</span>` : ''}</h2>
       ${friends.length
         ? `<ul class="friends">${friends.map(friendCard).join('')}</ul>
-           <p class="card__hint">Friends only see your frog’s name and mood.</p>`
+           <p class="card__hint">Friends see your frog’s name and mood, plus your class times if you share them.</p>`
         : '<p class="card__hint">No friends yet. Share your code or invite link above!</p>'}
     </section>
 
@@ -127,7 +195,14 @@ export async function renderFriends(root) {
     }
   });
 
+  root.querySelector('#share-schedule').addEventListener('change', async (e) => {
+    await saveProfile({ shareSchedule: e.target.checked });
+    toast(e.target.checked ? 'Friends can see your class times now.' : 'Your schedule is private again.');
+  });
+
   root.querySelector('.friends-page').addEventListener('click', async (e) => {
+    const week = e.target.closest('[data-week]');
+    if (week) { const f = friendsNow().find((x) => x.id === week.dataset.week); if (f) openFriendWeek(f); return; }
     const copy = e.target.closest('[data-copy]');
     if (copy) {
       try { await navigator.clipboard.writeText(copy.dataset.copy); toast('Copied!'); }
@@ -177,4 +252,5 @@ export async function renderFriends(root) {
   window.addEventListener(FRIENDS_EVENT, onChange, { once: true });
 
   refreshFriends().catch(() => { /* offline: shows the last-known list */ });
+  refreshSchedules().catch(() => { /* not set up yet or offline */ });
 }

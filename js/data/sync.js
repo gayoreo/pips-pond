@@ -6,6 +6,7 @@ import { readAll, writeAll, wipeDevice, CHANGE_EVENT } from './db.js';
 import { budget } from '../core/calc.js';
 import { todayKey } from '../core/dates.js';
 import { moodFor } from '../pip/mood.js';
+import { scheduleForFriends } from './study.js';
 
 export const SYNC_EVENT = 'pond:sync';
 const PARTS = { settings: 'settings', favorites: 'favorites', archive: 'archive', prefs: 'profile', study: 'study', decks: 'decks' };
@@ -248,8 +249,11 @@ async function publishProfile(client, user) {
   if (data.settings) {
     const b = budget(data.settings, data.entries.filter((e) => !e.deleted), todayKey());
     mood = moodFor(b);
-  }
-  const pub = { nickname: data.profile?.nickname ?? '', frog_name: data.profile?.frogName || 'Pip', mood };
+  }  
+  const pub = {
+    nickname: data.profile?.nickname ?? '', frog_name: data.profile?.frogName || 'Pip', mood,
+    schedule: data.profile?.shareSchedule ? scheduleForFriends(data) : null,
+  };
   const key = `${user.id}:${JSON.stringify(pub)}:${todayKey()}`;
   if (localStorage.getItem(PUBLISHED_KEY) === key) return;
   const { error } = await client.from('profiles').update({ ...pub, mood_at: new Date().toISOString() }).eq('id', user.id);

@@ -14,9 +14,10 @@ export const PING_KINDS = {
   dance: { label: 'dance', verb: 'Silly dance' },
 };
 
-const state = { friends: [], pings: [], loaded: false };
+const state = { friends: [], pings: [], schedules: {}, loaded: false };
 export const friendsNow = () => state.friends;
 export const pingsNow = () => state.pings;
+export const scheduleOf = (id) => state.schedules[id] ?? null;
 export const incomingCount = () => state.friends.filter((f) => f.status === 'incoming').length;
 
 async function call(fn, args) {
@@ -33,6 +34,17 @@ export async function refreshFriends() {
   state.loaded = true;
   if (changed) window.dispatchEvent(new Event(FRIENDS_EVENT));
   return state.friends;
+}
+
+// Class schedules your friends chose to share: { friendId: [meetings] }
+export async function refreshSchedules() {
+  if (!userNow()) return state.schedules;
+  const rows = (await call('friend_schedules')) ?? [];
+  const fresh = Object.fromEntries(rows.map((r) => [r.id, r.schedule]));
+  const changed = JSON.stringify(fresh) !== JSON.stringify(state.schedules);
+  state.schedules = fresh;
+  if (changed) window.dispatchEvent(new Event(FRIENDS_EVENT));
+  return fresh;
 }
 
 export async function refreshPings() {
@@ -84,6 +96,7 @@ export async function markPingsSeen(ids) {
 export function clearSocial() {
   state.friends = [];
   state.pings = [];
+  state.schedules = {};
   state.loaded = false;
 }
 
@@ -91,6 +104,6 @@ export function clearSocial() {
 export const whoName = (p) => p.nickname || (p.username ? `@${p.username}` : 'A friend');
 
 afterSync(async () => {
-  await Promise.all([refreshPings(), refreshFriends()]);
+  await Promise.all([refreshPings(), refreshFriends(), refreshSchedules().catch(() => {})]);
 });
 onSignOut(clearSocial);

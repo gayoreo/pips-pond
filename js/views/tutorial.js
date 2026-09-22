@@ -1,6 +1,6 @@
 // First-run tutorial: hello → practice pond → setup (3 grouped screens) → naming → move-in.
 // Also used for "Replay tutorial" (hello + practice only) and "Start next semester" (setup only).
-import { getProfile, saveProfile, getSettings, saveSettings, getEntries, addEntry, startNewSemester } from '../data/db.js';
+import { getProfile, saveProfile, getSettings, saveSettings, getEntries, addEntry, startNewSemester, addFutureSemester } from '../data/db.js';
 import { budget, DEFAULT_EXCHANGE_DAYS } from '../core/calc.js';
 import { todayKey, addDays, startOfWeek, formatLong, formatShort, eatingDays } from '../core/dates.js';
 import { seasonName } from '../core/semester.js';
@@ -17,6 +17,7 @@ const FLOWS = {
   first: ['hello', 'practice', 'semester', 'plan', 'extras', 'name'],
   replay: ['hello', 'practice', 'done'],
   semester: ['semester', 'plan', 'extras'],
+  future: ['semester', 'plan', 'extras'],
 };
 
 // Tutorial state lives here while the tutorial is open.
@@ -31,8 +32,18 @@ export function beginNewSemester(prefill) {
   location.hash = '#/setup';
 }
 
+// "Plan ahead": set up a semester's dates and budget now, without switching to it.
+// Unlike beginNewSemester, there's no current semester to roll over from yet.
+export function beginFutureSemester() {
+  t.mode = 'future';
+  t.step = 0;
+  t.draft = { ...defaultDraft({}), matchSwipes: '', matchPoints: '' };
+  t.bubble = '';
+  location.hash = '#/setup';
+}
+
 export async function renderSetup(root) {
-  if (t.mode !== 'semester') { location.hash = '#/settings'; return; }
+  if (t.mode !== 'semester' && t.mode !== 'future') { location.hash = '#/settings'; return; }
   return render(root);
 }
 
@@ -381,7 +392,7 @@ async function render(root) {
     done: 'Back to the pond',
     semester: 'next',
     plan: 'next',
-    extras: t.mode === 'semester' ? 'Start the semester' : 'next',
+    extras: t.mode === 'semester' ? 'Start the semester' : t.mode === 'future' ? 'Save' : 'next',
     name: 'Move in!',
   }[stepName];
 
@@ -390,9 +401,9 @@ async function render(root) {
   root.innerHTML = `
   <div class="tutorial tutorial--${stepName}">
     <div class="tutorial__top">
-      <span class="eyebrow">${setupIdx >= 0 ? `Setup ${setupIdx + 1} of ${setupSteps.length}` : t.mode === 'semester' ? 'New semester' : 'Welcome'}</span>
+      <span class="eyebrow">${setupIdx >= 0 ? `Setup ${setupIdx + 1} of ${setupSteps.length}` : t.mode === 'semester' ? 'New semester' : t.mode === 'future' ? 'Future semester' : 'Welcome'}</span>
       ${showSkip ? `<button type="button" class="btn-plain btn-plain--muted" data-skip>${t.mode === 'first' ? 'skip the practice' : 'skip'}</button>` : ''}
-      ${t.mode === 'semester' && t.step === 0 ? '<a class="btn-plain btn-plain--muted" href="#/semesters">cancel</a>' : ''}
+      ${(t.mode === 'semester' || t.mode === 'future') && t.step === 0 ? '<a class="btn-plain btn-plain--muted" href="#/semesters">cancel</a>' : ''}
     </div>
     <h1 class="page-title" tabindex="-1">${esc(TITLES[stepName](name))}</h1>
     ${stepName === 'practice' ? body : `
@@ -478,6 +489,13 @@ async function finish() {
     semesterName: String(d.semesterName).trim() || seasonName(d.start),
   };
 
+  if (mode === 'future') {
+    await addFutureSemester(settings);
+    toast(`${settings.semesterName} planned!`);
+    location.hash = '#/semesters';
+    return;
+  }
+
   if (mode === 'semester') await startNewSemester(settings);
   else await saveSettings(settings);
 
@@ -504,4 +522,3 @@ async function finish() {
   play('splash');
   location.hash = '#/pond';
 }
-

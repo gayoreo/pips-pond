@@ -39,7 +39,12 @@ if (cloudEnabled && startUser) {
   if (claim === 'choose') {
     target = '#/merge';
   } else {
-    syncNow();
+    // Wait for the real pull before deciding where to go — racing ahead here is what used
+    // to send a returning account (e.g. right after Google sign-in) into the tutorial,
+    // because nextStop() would run before the synced settings had actually landed.
+    // Bounded, like currentUser()'s own timeout: a stalled connection (online per the
+    // browser, but not actually reachable) shouldn't hang the app open on a blank boot.
+    await Promise.race([syncNow(), new Promise((r) => setTimeout(r, 6000))]);
     target = await nextStop(startUser).catch(() => null);
   }
 } else if (cloudEnabled && !mayUseApp()) {

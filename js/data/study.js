@@ -1,7 +1,8 @@
 // Study planner data: courses, tasks (homework, assignments, exams, readings) and weekly repeats.
 // Saved with the rest of your pond and synced as one piece called "study".
 import { readAll, writeAll, newId } from './db.js';
-import { todayKey, addDays, dayOfWeek, fromKey, formatShort, formatHM } from '../core/dates.js';
+import { todayKey, addDays, dayOfWeek, fromKey, formatShort, formatHM, toKey } from '../core/dates.js';
+import { cardsDueMap } from './decks.js';
 
 export const TASK_TYPES = {
   homework:   { label: 'Homework' },
@@ -20,10 +21,11 @@ export const DEFAULT_STUDY_NOTIFY = {
   nightTime: '20:00',
   examDays: 3,         // exam heads-up this many days before (0 = off)
   overdue: true,       // include overdue things in the morning list
+  cards: true,         // mention flashcards that are due in the morning list
   pip: true,           // Pip's mood reacts to homework and exams
 };
 
-const blank = () => ({ courses: [], tasks: [], series: [] });
+const blank = () => ({ courses: [], tasks: [], series: [], blocks: [] });
 
 function norm(s) {
   if (!s || typeof s !== 'object' || Array.isArray(s)) return blank();
@@ -31,6 +33,7 @@ function norm(s) {
     courses: Array.isArray(s.courses) ? s.courses : [],
     tasks: Array.isArray(s.tasks) ? s.tasks : [],
     series: Array.isArray(s.series) ? s.series : [],
+    blocks: Array.isArray(s.blocks) ? s.blocks : [],
   };
 }
 
@@ -59,6 +62,28 @@ export const addCourse = ({ name, color }) => change((s) => {
 export const updateCourse = (id, patch) => change((s) => {
   const c = s.courses.find((x) => x.id === id);
   if (c) Object.assign(c, patch);
+});
+
+// Saves a whole course from the setup screens: name, code, color, class and lab times,
+// plus any new exams, assignments and readings. Returns the course.
+// meetings: [{ kind: 'class' | 'lab', days: [0-6], start: 'HH:MM', end: 'HH:MM', place }]
+export const saveCourse = ({ id, name, code = '', color, meetings = [] }, newTasks = []) => change((s) => {
+  let course = id ? s.courses.find((c) => c.id === id) : null;
+  const clean = meetings
+    .filter((m) => m.days?.length && m.start)
+    .map((m) => ({ id: m.id || newId(), kind: m.kind === 'lab' ? 'lab' : 'class', days: [...m.days].sort(), start: m.start, end: m.end || '', place: (m.place || '').trim() }));
+  if (course) Object.assign(course, { name: name.trim(), code: code.trim(), color: color || course.color, meetings: clean });
+  else {
+    course = { id: newId(), name: name.trim(), code: code.trim(), color: color || COURSE_COLORS[s.courses.length % COURSE_COLORS.length], meetings: clean };
+    s.courses.push(course);
+  }
+  for (const t of newTasks) {
+    s.tasks.push({
+      id: newId(), courseId: course.id, title: t.title.trim(), type: t.type, due: t.due, time: t.time || '',
+      done: false, doneAt: '', checklist: [], notes: '',
+    });
+  }
+  return course;
 });
 
 export const deleteCourse = (id) => change((s) => {
@@ -159,6 +184,132 @@ export function ensureSeries() {
   change((st) => { for (const r of st.series) fillSeries(st, r, today); }, false);
 }
 
+// ---------- class and lab times ----------
+// Everything meeting on one day, earliest first: [{ course, meeting }]
+export function meetingsOn(s, day) {
+  const dow = dayOfWeek(day);
+  const out = [];
+  for (const course of s.courses) for (const m of course.meetings ?? []) if (m.days.includes(dow)) out.push({ course, meeting: m });
+  return out.sort((a, b) => a.meeting.start.localeCompare(b.meeting.start));
+}
+
+export const timeRange = (m) => (m.end ? `${formatHM(m.start)} to ${formatHM(m.end)}` : formatHM(m.start));
+
+// ---------- your own calendar blocks (work, appointments, study time, other) ----------
+// { id, kind, title, start: 'HH:MM', end: 'HH:MM', place, days: [0-6] for weekly, date: 'YYYY-MM-DD' for one-time, until }
+export const BLOCK_KINDS = {
+  study:       { label: 'Study time' },
+  work:        { label: 'Work' },
+  appointment: { label: 'Appointment' },
+  other:       { label: 'Other' },
+};
+
+export const saveBlock = (b) => change((s) => {
+  const clean = {
+    id: b.id || newId(), kind: BLOCK_KINDS[b.kind] ? b.kind : 'other', title: (b.title || '').trim(),
+    start: b.start, end: b.end || '', place: (b.place || '').trim(),
+    days: b.weekly ? [...(b.days || [])].sort() : [], date: b.weekly ? '' : b.date, until: b.weekly ? (b.until || '') : '',
+  };
+  const i = s.blocks.findIndex((x) => x.id === clean.id);
+  if (i >= 0) s.blocks[i] = clean; else s.blocks.push(clean);
+  return clean;
+});
+
+export const deleteBlock = (id) => change((s) => { s.blocks = s.blocks.filter((b) => b.id !== id); });
+
+const blockOn = (b, day) => (b.days?.length ? b.days.includes(dayOfWeek(day)) && (!b.until || day <= b.until) : b.date === day);
+
+// Everything on one day's calendar, earliest first: classes, labs and your own blocks.
+// [{ kind: 'class'|'lab'|'study'|'work'|'appointment'|'other', title, start, end, place, color, course?, meeting?, block? }]
+export function dayItems(s, day) {
+  const items = meetingsOn(s, day).map(({ course, meeting }) => ({
+    kind: meeting.kind, title: course.name, start: meeting.start, end: meeting.end, place: meeting.place,
+    color: course.color, course, meeting,
+  }));
+  for (const b of s.blocks) if (blockOn(b, day)) items.push({ kind: b.kind, title: b.title || BLOCK_KINDS[b.kind]?.label, start: b.start, end: b.end, place: b.place, block: b });
+  return items.sort((a, b) => a.start.localeCompare(b.start));
+}
+
+const toMin = (hm) => { const [h, m] = hm.split(':').map(Number); return h * 60 + m; };
+const toHM = (n) => `${String(Math.floor(n / 60)).padStart(2, '0')}:${String(n % 60).padStart(2, '0')}`;
+
+// Open stretches of at least `min` minutes between `from` and `to` on a day (things without an end count as 1 hour).
+export function freeGaps(items, { from = '08:00', to = '22:00', min = 60 } = {}) {
+  const busy = items.map((i) => [toMin(i.start), i.end ? toMin(i.end) : toMin(i.start) + 60]).sort((a, b) => a[0] - b[0]);
+  const gaps = [];
+  let t = toMin(from);
+  const stop = toMin(to);
+  for (const [a, b] of busy) {
+    if (a - t >= min && t < stop) gaps.push({ start: toHM(t), end: toHM(Math.min(a, stop)) });
+    t = Math.max(t, b);
+  }
+  if (stop - t >= min) gaps.push({ start: toHM(t), end: toHM(stop) });
+  return gaps.filter((g) => toMin(g.end) - toMin(g.start) >= min);
+}
+
+// ---------- reading a syllabus ----------
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+
+// Picks the year that puts month/day closest to today (syllabi rarely say the year).
+function nearestDate(month, day, today = todayKey()) {
+  const y = Number(today.slice(0, 4));
+  const options = [y - 1, y, y + 1].map((yy) => new Date(yy, month - 1, day)).filter((d) => d.getMonth() === month - 1);
+  if (!options.length) return null;
+  const now = fromKey(today).getTime();
+  options.sort((a, b) => Math.abs(a - now) - Math.abs(b - now));
+  return toKey(options[0]);
+}
+
+// Finds a date anywhere in a line: 2026-09-30, 9/30, 9/30/26, Sep 30, September 30th, 30 Sep.
+export function findDate(line, today = todayKey()) {
+  let m = /(\d{4})-(\d{1,2})-(\d{1,2})/.exec(line);
+  if (m) return { date: toKey(new Date(+m[1], +m[2] - 1, +m[3])), match: m[0] };
+  m = /\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/.exec(line);
+  if (m) {
+    const [mo, d] = [+m[1], +m[2]];
+    if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) {
+      const date = m[3] ? toKey(new Date(m[3].length === 2 ? 2000 + +m[3] : +m[3], mo - 1, d)) : nearestDate(mo, d, today);
+      if (date) return { date, match: m[0] };
+    }
+  }
+  m = /\b([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b/.exec(line);
+  if (m && MONTHS.includes(m[1].slice(0, 3).toLowerCase())) {
+    const date = nearestDate(MONTHS.indexOf(m[1].slice(0, 3).toLowerCase()) + 1, +m[2], today);
+    if (date) return { date, match: m[0] };
+  }
+  m = /\b(\d{1,2})\s+([A-Za-z]{3,9})\b/.exec(line);
+  if (m && MONTHS.includes(m[2].slice(0, 3).toLowerCase())) {
+    const date = nearestDate(MONTHS.indexOf(m[2].slice(0, 3).toLowerCase()) + 1, +m[1], today);
+    if (date) return { date, match: m[0] };
+  }
+  return null;
+}
+
+export function guessTaskType(title) {
+  if (/\b(exam|midterm|final|test|quiz)\b/i.test(title)) return 'exam';
+  if (/\b(read|reading|chapter|ch\.?\s*\d|pages?|pp\.)/i.test(title)) return 'reading';
+  if (/\b(hw|homework|problem set|pset|p\.?set|worksheet|exercises?|webwork)\b/i.test(title)) return 'homework';
+  return 'assignment';
+}
+
+// Turns pasted syllabus lines into dated items. Lines without a date are skipped.
+export function parseSyllabus(text, today = todayKey()) {
+  const items = [];
+  let skipped = 0;
+  for (const raw of String(text ?? '').split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    const found = findDate(line, today);
+    if (!found) { skipped++; continue; }
+    const title = line.replace(found.match, ' ')
+      .replace(/\b(mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)(day)?\b\.?,?/gi, ' ')
+      .replace(/^[\s\-:,.|]+|[\s\-:,.|]+$/g, '').replace(/\s{2,}/g, ' ').trim();
+    if (!title) { skipped++; continue; }
+    items.push({ title, type: guessTaskType(title), due: found.date });
+  }
+  return { items, skipped };
+}
+
 // ---------- reading the planner ----------
 const daysBetween = (from, to) => Math.round((fromKey(to) - fromKey(from)) / 86400000);
 export const liveTasks = (s) => s.tasks.filter((t) => !t.deleted);
@@ -208,6 +359,7 @@ export function studyForPush(data) {
   return {
     tasks: liveTasks(s).filter((t) => !t.done && t.due <= until).sort(byDue).slice(0, 60)
       .map((t) => ({ id: t.id, title: t.title, type: t.type, course: names[t.courseId] || '', due: t.due, time: t.time || '' })),
+    cards: cardsDueMap(data),
   };
 }
 

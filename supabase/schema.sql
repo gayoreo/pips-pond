@@ -302,3 +302,12 @@ grant select, insert (user_id, tz, prefs, semester, snapshot, updated_at),
 
 revoke all on function public.save_push_subscription(text, text, text), public.delete_push_subscription(text) from public, anon;
 grant execute on function public.save_push_subscription(text, text, text), public.delete_push_subscription(text) to authenticated;
+
+-- Study planner. Safe to run again.
+alter table public.user_state add column if not exists study jsonb;
+alter table public.user_state add column if not exists study_at timestamptz;
+alter table public.notify_state add column if not exists study jsonb;
+grant insert (study), update (study) on public.notify_state to authenticated;
+
+alter table public.user_state add column if not exists decks jsonb;
+alter table public.user_state add column if not exists decks_at timestamptz;

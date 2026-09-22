@@ -1,21 +1,31 @@
-// Study tab: the planner (homework, assignments, exams, readings), courses and study reminders.
+// Study tab: Planner (homework, assignments, exams, readings), Week (classes, labs and your own blocks)
+// and Decks (flashcards). Also the course list, calendar blocks and study reminder settings.
 import {
   getStudy, addCourse, updateCourse, deleteCourse, addTask, updateTask, deleteTask, toggleDone,
   addSeries, stopSeries, ensureSeries, liveTasks, studyStatus, studyPipLine, dueLabel, studyNotifyPrefs,
-  TASK_TYPES, COURSE_COLORS,
+  dayItems, freeGaps, timeRange, saveBlock, deleteBlock, TASK_TYPES, BLOCK_KINDS, COURSE_COLORS,
 } from '../data/study.js';
+import { getDecks, dueCards, totalDue, reviewStreak, addDeck } from '../data/decks.js';
 import { getProfile, saveProfile, readAll } from '../data/db.js';
 import { pushStatus } from '../data/push.js';
-import { todayKey, addDays, dayOfWeek } from '../core/dates.js';
+import { todayKey, addDays, dayOfWeek, startOfWeek, formatShort, formatHM, fromKey } from '../core/dates.js';
 import { esc } from '../ui/dom.js';
 import { toast } from '../ui/toast.js';
 import { play } from '../ui/sound.js';
+import { openSheet } from '../ui/sheet.js';
+import { beginCourseSetup } from './courseSetup.js';
+import { openDeck } from './decks.js';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const view = { course: 'all', showDone: false }; // remembered while the app is open
+const MODE_KEY = 'study:mode';
+const view = { course: 'all', showDone: false, week: null }; // remembered while the app is open
 const byDue = (a, b) => `${a.due}T${a.time || '99'}`.localeCompare(`${b.due}T${b.time || '99'}`);
+const getMode = () => { try { return sessionStorage.getItem(MODE_KEY) || 'planner'; } catch { return 'planner'; } };
+const setMode = (m) => { try { sessionStorage.setItem(MODE_KEY, m); } catch { /* ignore */ } };
+const nowHM = () => { const d = new Date(); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+const KIND_LABEL = { class: 'Class', lab: 'Lab', ...Object.fromEntries(Object.entries(BLOCK_KINDS).map(([k, v]) => [k, v.label])) };
 
-// ---------- the list ----------
+// ---------- planner list ----------
 function taskRow(t, courses, today) {
   const c = courses[t.courseId];
   const total = t.checklist?.length || 0;
@@ -48,14 +58,25 @@ function groupHTML(title, list, courses, today, extra = '') {
   </section>`;
 }
 
-export async function renderStudy(root) {
-  ensureSeries();
-  const s = getStudy();
-  const today = todayKey();
-  const profile = await getProfile();
+function todayScheduleHTML(s, today) {
+  const items = dayItems(s, today);
+  if (!items.length) return '';
+  const now = nowHM();
+  return `
+  <section class="today-sched" aria-label="Today's schedule">
+    <p class="today-sched__title">Today</p>
+    <ul>${items.map((i) => `
+      <li class="${i.end && i.end < now ? 'is-past' : ''}" style="--course:${i.color ?? `var(--kind-${i.kind})`}">
+        <span class="today-sched__time">${esc(timeRange(i))}</span>
+        <span>${esc(i.title)}${i.kind === 'lab' ? ' lab' : ''}${i.place ? ` <span class="muted">· ${esc(i.place)}</span>` : ''}</span>
+      </li>`).join('')}
+    </ul>
+  </section>`;
+}
+
+function plannerHTML(s, today, profile) {
   const courses = Object.fromEntries(s.courses.map((c) => [c.id, c]));
   if (view.course !== 'all' && !courses[view.course]) view.course = 'all';
-
   const shown = liveTasks(s).filter((t) => view.course === 'all' || t.courseId === view.course);
   const open = shown.filter((t) => !t.done).sort(byDue);
   const tomorrow = addDays(today, 1);
@@ -63,25 +84,26 @@ export async function renderStudy(root) {
   const done = shown.filter((t) => t.done && (t.doneAt || '').slice(0, 10) >= addDays(today, -14))
     .sort((a, b) => (b.doneAt || '').localeCompare(a.doneAt || ''));
 
-  const st = studyStatus(s, today);
-  const line = studyPipLine(st, today)
-    ?? (liveTasks(s).length ? 'All caught up for now. Nice.' : null);
-
   const chips = s.courses.length ? `
     <div class="chip-row course-chips" role="group" aria-label="Show one course">
       <button type="button" class="course-chip" data-course="all" aria-pressed="${view.course === 'all'}">All</button>
       ${s.courses.map((c) => `<button type="button" class="course-chip" data-course="${esc(c.id)}" aria-pressed="${view.course === c.id}" style="--course:${c.color}">${esc(c.name)}</button>`).join('')}
     </div>` : '';
 
-  const body = !liveTasks(s).length ? `
+  if (!liveTasks(s).length && !s.courses.length) {
+    return `
     <section class="card study-empty">
       <p class="hand">Nothing planned yet.</p>
-      <p class="card__hint">Add your homework, exams and readings, and ${esc(profile.frogName)} will keep an eye on due dates.</p>
+      <p class="card__hint">Set up your courses with class times, labs, exams and assignments, and ${esc(profile.frogName)} will keep an eye on due dates.</p>
       <div class="row">
-        <button type="button" class="btn-sketch btn-sketch--go" data-add>+ add something</button>
-        <button type="button" class="btn-sketch" data-courses>add courses</button>
+        <button type="button" class="btn-sketch btn-sketch--go" data-setup>set up a course</button>
+        <button type="button" class="btn-sketch" data-add>+ add one thing</button>
       </div>
-    </section>` : `
+    </section>`;
+  }
+  return `
+    ${todayScheduleHTML(s, today)}
+    ${chips}
     ${groupHTML('Overdue', open.filter((t) => t.due < today), courses, today, 'plan-group--late')}
     ${groupHTML('Today', open.filter((t) => t.due === today), courses, today)}
     ${groupHTML('Tomorrow', open.filter((t) => t.due === tomorrow), courses, today)}
@@ -92,38 +114,151 @@ export async function renderStudy(root) {
       <button type="button" class="btn-plain btn-plain--muted" data-show-done aria-expanded="${view.showDone}">
         ${view.showDone ? 'hide' : 'show'} finished (${done.length})</button>
       ${view.showDone ? groupHTML('Finished', done, courses, today, 'plan-group--done') : ''}` : ''}`;
+}
+
+// ---------- week calendar ----------
+function weekHTML(s, today) {
+  const firstDay = readAll().settings?.weekStart ?? 1;
+  view.week ??= startOfWeek(today, firstDay);
+  const days = Array.from({ length: 7 }, (_, i) => addDays(view.week, i));
+  const courses = Object.fromEntries(s.courses.map((c) => [c.id, c]));
+  const tasks = liveTasks(s).filter((t) => !t.done);
+  const now = nowHM();
+
+  const dayCard = (day) => {
+    const items = dayItems(s, day);
+    const due = tasks.filter((t) => t.due === day);
+    const gaps = day >= today ? freeGaps(items, { from: day === today && now > '08:00' ? now : '08:00' }) : [];
+    const rows = [
+      ...items.map((i) => ({ at: i.start, html: `
+        <li class="wk-item wk-item--${i.kind}" style="--course:${i.color ?? `var(--kind-${i.kind})`}">
+          <button type="button" ${i.block ? `data-block="${esc(i.block.id)}"` : `data-edit-course="${esc(i.course.id)}"`}>
+            <span class="wk-item__time">${esc(timeRange(i))}</span>
+            <span class="wk-item__title">${esc(i.title)}</span>
+            <span class="wk-item__meta">${KIND_LABEL[i.kind] ?? ''}${i.place ? ` · ${esc(i.place)}` : ''}</span>
+          </button>
+        </li>` })),
+      ...gaps.map((g) => ({ at: g.start, html: `
+        <li class="wk-free">
+          <span>Free ${esc(formatHM(g.start))} to ${esc(formatHM(g.end))}</span>
+          <button type="button" class="btn-plain" data-study-at="${day}|${g.start}|${g.end}">+ study</button>
+        </li>` })),
+    ].sort((a, b) => a.at.localeCompare(b.at)).map((r) => r.html).join('');
+    return `
+    <section class="wk-day${day === today ? ' is-today' : ''}${day < today ? ' is-past' : ''}">
+      <h3 class="wk-day__head">${DAYS[dayOfWeek(day)]} <span>${fromKey(day).getDate()}</span></h3>
+      ${rows ? `<ul class="wk-list">${rows}</ul>` : '<p class="card__hint">Nothing scheduled.</p>'}
+      ${due.length ? `<ul class="wk-due">${due.map((t) => `<li><button type="button" data-open="${esc(t.id)}" style="--course:${courses[t.courseId]?.color ?? 'var(--tape)'}">Due: ${esc(t.title)}${t.time ? ` <span class="muted">${esc(formatHM(t.time))}</span>` : ''}</button></li>`).join('')}</ul>` : ''}
+    </section>`;
+  };
+
+  return `
+    <div class="wk-nav">
+      <button type="button" class="btn-plain" data-week="-7" aria-label="Previous week">‹</button>
+      <p class="hand">${formatShort(days[0])} to ${formatShort(days[6])}</p>
+      <button type="button" class="btn-plain" data-week="7" aria-label="Next week">›</button>
+    </div>
+    <div class="row wk-tools">
+      ${view.week !== startOfWeek(today, firstDay) ? '<button type="button" class="btn-plain" data-week="now">this week</button>' : '<span></span>'}
+      <button type="button" class="btn-sketch btn-sketch--small" data-add-block>+ add a block</button>
+    </div>
+    <p class="card__hint">Classes and labs come from your courses. Add work, appointments and study time as blocks. Open time between 8 AM and 10 PM shows as free.</p>
+    <div class="wk-grid">${days.map(dayCard).join('')}</div>`;
+}
+
+// ---------- decks list ----------
+function decksHTML(s) {
+  const decks = getDecks();
+  const courses = Object.fromEntries(s.courses.map((c) => [c.id, c]));
+  const streak = reviewStreak();
+  if (!decks.length) {
+    return `
+    <section class="card study-empty">
+      <p class="hand">No decks yet.</p>
+      <p class="card__hint">Make a deck, then paste in your terms. Copying from Quizlet, Sheets or a doc works.</p>
+      <button type="button" class="btn-sketch btn-sketch--go" data-new-deck>+ new deck</button>
+    </section>`;
+  }
+  return `
+    ${streak > 1 ? `<p class="card__hint">Review streak: <b>${streak} days</b></p>` : ''}
+    <ul class="deck-list">${decks.map((d) => {
+      const due = dueCards(d).length;
+      const c = courses[d.courseId];
+      return `
+      <li><button type="button" class="deck-row" data-deck="${esc(d.id)}" style="--course:${c?.color ?? 'var(--tape)'}">
+        <span class="deck-row__name">${esc(d.name)}</span>
+        <span class="deck-row__meta">${[c ? esc(c.name) : '', `${d.cards.length} ${d.cards.length === 1 ? 'card' : 'cards'}`, d.lastQuiz ? `last quiz ${d.lastQuiz.score}/${d.lastQuiz.total}` : ''].filter(Boolean).join(' · ')}</span>
+        ${due ? `<span class="deck-row__due">${due} due</span>` : ''}
+      </button></li>`;
+    }).join('')}</ul>`;
+}
+
+// ---------- the page ----------
+export async function renderStudy(root) {
+  ensureSeries();
+  const s = getStudy();
+  const today = todayKey();
+  const profile = await getProfile();
+  const mode = getMode();
+
+  let line = null;
+  if (mode === 'decks') {
+    const due = totalDue();
+    line = due ? `${due} ${due === 1 ? 'card is' : 'cards are'} ready to review.` : getDecks().length ? 'No cards due. Nice work.' : null;
+  } else {
+    line = studyPipLine(studyStatus(s, today), today) ?? (liveTasks(s).length ? 'All caught up for now. Nice.' : null);
+  }
+  const title = { planner: 'Planner', week: 'Week', decks: 'Decks' }[mode];
+  const addAttr = mode === 'decks' ? 'data-new-deck' : mode === 'week' ? 'data-add-block' : 'data-add';
 
   root.innerHTML = `
   <div class="study stack">
     <header class="study__head">
-      <div>
-        <p class="eyebrow">Study</p>
-        <h1 class="page-title">Planner</h1>
-      </div>
-      <button type="button" class="btn-sketch btn-sketch--go" data-add>+ add</button>
+      <div><p class="eyebrow">Study</p><h1 class="page-title">${title}</h1></div>
+      <button type="button" class="btn-sketch btn-sketch--go" ${addAttr}>+ add</button>
     </header>
+    <div class="seg seg--3 study-mode" role="group" aria-label="Study view">
+      ${['planner', 'week', 'decks'].map((m) => `<button type="button" data-mode="${m}" aria-pressed="${mode === m}">${m}</button>`).join('')}
+    </div>
     ${line ? `<p class="study__pip">“${esc(line)}”</p>` : ''}
     <div class="study__tools">
       <button type="button" class="btn-plain" data-courses>Courses</button>
       <button type="button" class="btn-plain" data-reminders>Reminders</button>
     </div>
-    ${chips}
-    ${body}
+    ${mode === 'decks' ? decksHTML(s) : mode === 'week' ? weekHTML(s, today) : plannerHTML(s, today, profile)}
   </div>`;
 
   root.querySelector('.study').addEventListener('click', (e) => {
     const t = e.target;
+    const modeBtn = t.closest('[data-mode]');
+    if (modeBtn) { setMode(modeBtn.dataset.mode); return renderStudy(root); }
     const doneBtn = t.closest('[data-done]');
-    if (doneBtn) {
-      const nowDone = toggleDone(doneBtn.dataset.done);
-      play(nowDone ? 'pop' : 'stamp');
-      return;
-    }
+    if (doneBtn) { play(toggleDone(doneBtn.dataset.done) ? 'pop' : 'stamp'); return undefined; }
     const openBtn = t.closest('[data-open]');
     if (openBtn) return openTaskSheet(getStudy().tasks.find((x) => x.id === openBtn.dataset.open));
     if (t.closest('[data-add]')) return openTaskSheet(null);
+    if (t.closest('[data-setup]')) return beginCourseSetup(null);
     if (t.closest('[data-courses]')) return openCoursesSheet();
     if (t.closest('[data-reminders]')) return openRemindersSheet();
+    if (t.closest('[data-add-block]')) return openBlockSheet(null);
+    if (t.closest('[data-new-deck]')) return openNewDeckSheet();
+    const deck = t.closest('[data-deck]');
+    if (deck) return openDeck(deck.dataset.deck);
+    const block = t.closest('[data-block]');
+    if (block) return openBlockSheet(getStudy().blocks.find((b) => b.id === block.dataset.block));
+    const editCourse = t.closest('[data-edit-course]');
+    if (editCourse) return beginCourseSetup(editCourse.dataset.editCourse);
+    const studyAt = t.closest('[data-study-at]');
+    if (studyAt) {
+      const [date, start, end] = studyAt.dataset.studyAt.split('|');
+      const endAt = start < '23:00' && end > addHour(start) ? addHour(start) : end;
+      return openBlockSheet(null, { kind: 'study', date, start, end: endAt });
+    }
+    const wk = t.closest('[data-week]');
+    if (wk) {
+      view.week = wk.dataset.week === 'now' ? null : addDays(view.week, Number(wk.dataset.week));
+      return renderStudy(root);
+    }
     const chip = t.closest('[data-course]');
     if (chip) { view.course = chip.dataset.course; return renderStudy(root); }
     if (t.closest('[data-show-done]')) { view.showDone = !view.showDone; return renderStudy(root); }
@@ -131,36 +266,7 @@ export async function renderStudy(root) {
   });
 }
 
-// ---------- bottom sheet ----------
-function openSheet(title, html, wire) {
-  const opener = document.activeElement;
-  const back = document.createElement('div');
-  back.className = 'sheet-backdrop';
-  back.innerHTML = `
-    <div class="sheet study-sheet" role="dialog" aria-modal="true" aria-label="${esc(title)}" tabindex="-1">
-      <span class="sheet__grab" aria-hidden="true"></span>
-      <div class="sheet__head">
-        <button type="button" class="btn-plain btn-plain--muted" data-close>close</button>
-        <h2 class="eyebrow">${esc(title)}</h2>
-        <span class="spacer"></span>
-      </div>
-      <div class="study-sheet__body">${html}</div>
-    </div>`;
-  const sheet = back.querySelector('.sheet');
-  const onKey = (e) => { if (e.key === 'Escape') close(); };
-  function close() {
-    back.remove();
-    document.body.classList.remove('sheet-open');
-    document.removeEventListener('keydown', onKey);
-    opener?.focus?.();
-  }
-  back.addEventListener('click', (e) => { if (e.target === back || e.target.closest('[data-close]')) close(); });
-  document.body.append(back);
-  document.body.classList.add('sheet-open');
-  document.addEventListener('keydown', onKey);
-  sheet.focus();
-  wire(sheet, close);
-}
+const addHour = (hm) => { const [h, m] = hm.split(':').map(Number); return `${String(Math.min(h + 1, 23)).padStart(2, '0')}:${String(m).padStart(2, '0')}`; };
 
 // ---------- add / edit a task ----------
 function checklistHTML(items) {
@@ -306,7 +412,6 @@ function openTaskSheet(task) {
       }
       if (!t.closest('[data-save]')) return;
 
-      // Save
       const title = f('title').value.trim();
       const due = f('due').value;
       const time = f('time').value;
@@ -344,60 +449,157 @@ function openTaskSheet(task) {
   });
 }
 
+// ---------- calendar blocks ----------
+function openBlockSheet(block, preset = {}) {
+  const editing = Boolean(block);
+  const today = todayKey();
+  const b = {
+    kind: 'study', title: '', start: '15:00', end: '16:00', place: '', date: today, days: [], until: '',
+    ...preset, ...(block ?? {}),
+  };
+  const weekly = editing ? b.days.length > 0 : false;
+  const semesterEnd = readAll().settings?.end;
+  const html = `
+    <div class="type-pills" role="group" aria-label="Kind">
+      ${Object.entries(BLOCK_KINDS).map(([k, v]) => `<button type="button" data-bkind="${k}" aria-pressed="${b.kind === k}">${v.label}</button>`).join('')}
+    </div>
+    <label class="field"><span class="field__label">Name <span class="muted">(optional)</span></span><input name="title" maxlength="60" autocomplete="off" value="${esc(b.title)}" placeholder="Library shift, dentist, Calc review"></label>
+    <div class="grid-2">
+      <label class="field">Starts<input type="time" name="start" value="${esc(b.start)}"></label>
+      <label class="field">Ends<input type="time" name="end" value="${esc(b.end)}"></label>
+    </div>
+    <label class="row"><span>Every week</span><input type="checkbox" class="switch" name="weekly"${weekly ? ' checked' : ''}></label>
+    <label class="field" data-once${weekly ? ' hidden' : ''}>Date<input type="date" name="date" value="${esc(b.date || today)}"></label>
+    <div class="stack" data-weekly${weekly ? '' : ' hidden'}>
+      <fieldset class="days-pick">
+        <legend class="field">On</legend>
+        ${DAYS.map((name, i) => `<label class="daychip"><input type="checkbox" name="days" value="${i}"${b.days.includes(i) ? ' checked' : ''}><span>${name}</span></label>`).join('')}
+      </fieldset>
+      <label class="field"><span class="field__label">Until <span class="muted">(optional)</span></span><input type="date" name="until" value="${esc(b.until || semesterEnd || '')}"></label>
+    </div>
+    <label class="field"><span class="field__label">Where <span class="muted">(optional)</span></span><input name="place" maxlength="60" autocomplete="off" value="${esc(b.place)}"></label>
+    <button type="button" class="btn-sketch btn-sketch--go btn-sketch--big" data-save>${editing ? 'Save' : 'Add it'}</button>
+    ${editing ? '<button type="button" class="btn-plain btn-plain--danger" data-delete>delete</button>' : ''}`;
+
+  openSheet(editing ? 'Edit block' : 'Add to your week', html, (sheet, close) => {
+    const f = (name) => sheet.querySelector(`[name="${name}"]`);
+    let kind = b.kind;
+    sheet.addEventListener('change', (e) => {
+      if (e.target.name === 'weekly') {
+        sheet.querySelector('[data-once]').hidden = e.target.checked;
+        sheet.querySelector('[data-weekly]').hidden = !e.target.checked;
+        if (e.target.checked && !sheet.querySelector('[name="days"]:checked')) {
+          const box = sheet.querySelector(`[name="days"][value="${dayOfWeek(f('date').value || today)}"]`);
+          if (box) box.checked = true;
+        }
+      }
+    });
+    sheet.addEventListener('click', (e) => {
+      const pill = e.target.closest('[data-bkind]');
+      if (pill) {
+        kind = pill.dataset.bkind;
+        sheet.querySelectorAll('[data-bkind]').forEach((x) => x.setAttribute('aria-pressed', String(x === pill)));
+        return;
+      }
+      if (e.target.closest('[data-delete]')) {
+        if (!confirm('Delete this block?')) return;
+        deleteBlock(block.id);
+        close();
+        toast('Deleted.');
+        return;
+      }
+      if (!e.target.closest('[data-save]')) return;
+      const start = f('start').value;
+      const end = f('end').value;
+      const isWeekly = f('weekly').checked;
+      const days = [...sheet.querySelectorAll('[name="days"]:checked')].map((x) => Number(x.value));
+      if (!start) { toast('Pick a start time.'); return; }
+      if (end && end <= start) { toast('The end time is before the start time.'); return; }
+      if (isWeekly && !days.length) { toast('Pick which days.'); return; }
+      if (!isWeekly && !f('date').value) { toast('Pick a date.'); return; }
+      saveBlock({
+        id: block?.id, kind, title: f('title').value, start, end, place: f('place').value,
+        weekly: isWeekly, days, date: f('date').value, until: f('until').value,
+      });
+      close();
+      play('pop');
+      toast(editing ? 'Saved.' : 'Added to your week.');
+    });
+  });
+}
+
 // ---------- courses ----------
 function coursesHTML() {
   const s = getStudy();
   return `
-    ${s.courses.length ? `<ul class="course-list">${s.courses.map((c) => `
+    ${s.courses.length ? `<ul class="course-list">${s.courses.map((c) => {
+      const meets = (c.meetings ?? []);
+      const summary = [
+        meets.filter((m) => m.kind === 'class').length ? `${meets.filter((m) => m.kind === 'class').length} class ${meets.filter((m) => m.kind === 'class').length === 1 ? 'time' : 'times'}` : '',
+        meets.filter((m) => m.kind === 'lab').length ? `${meets.filter((m) => m.kind === 'lab').length} lab` : '',
+      ].filter(Boolean).join(', ');
+      return `
       <li class="course-row">
         <button type="button" class="course-swatch" data-recolor="${esc(c.id)}" style="background:${c.color}" aria-label="Change color for ${esc(c.name)}"></button>
-        <input data-rename="${esc(c.id)}" value="${esc(c.name)}" maxlength="40" aria-label="Course name">
-        <button type="button" class="btn-plain btn-plain--danger" data-remove="${esc(c.id)}">remove</button>
-      </li>`).join('')}</ul>` : '<p class="card__hint">No courses yet. Adding them lets you color-code and filter the planner.</p>'}
-    <form class="course-add" data-add-course>
-      <label class="field grow">New course<input name="name" maxlength="40" autocomplete="off" placeholder="Bio 101"></label>
-      <button type="submit" class="btn-sketch">add</button>
-    </form>
-    <p class="card__hint">Tap a color dot to change it.</p>`;
+        <span class="course-row__name"><b>${esc(c.name)}</b>${c.code ? ` <span class="muted">${esc(c.code)}</span>` : ''}<br><span class="muted">${summary || 'No class times yet'}</span></span>
+        <button type="button" class="btn-plain" data-edit="${esc(c.id)}">edit</button>
+        <button type="button" class="btn-plain btn-plain--danger" data-remove="${esc(c.id)}" aria-label="Remove ${esc(c.name)}">✕</button>
+      </li>`;
+    }).join('')}</ul>` : '<p class="card__hint">No courses yet.</p>'}
+    <button type="button" class="btn-sketch btn-sketch--go" data-setup-new>+ set up a course</button>
+    <p class="card__hint">Setting up a course adds its class times, lab times, exams, assignments and readings in one go. Tap a color dot to change it.</p>`;
 }
 
 function openCoursesSheet() {
-  openSheet('Courses', coursesHTML(), (sheet) => {
+  openSheet('Courses', coursesHTML(), (sheet, close) => {
     const body = sheet.querySelector('.study-sheet__body');
     const redraw = () => { body.innerHTML = coursesHTML(); };
-    sheet.addEventListener('submit', (e) => {
-      e.preventDefault();
-      const name = e.target.name.value.trim();
-      if (!name) return toast('Type the course name.');
-      addCourse({ name });
-      redraw();
-      body.querySelector('[name="name"]').focus();
-      return undefined;
-    });
-    sheet.addEventListener('change', (e) => {
-      const id = e.target.dataset.rename;
-      if (!id) return;
-      const name = e.target.value.trim();
-      if (name) updateCourse(id, { name });
-    });
     sheet.addEventListener('click', (e) => {
+      if (e.target.closest('[data-setup-new]')) { close(); beginCourseSetup(null); return; }
+      const edit = e.target.closest('[data-edit]');
+      if (edit) { close(); beginCourseSetup(edit.dataset.edit); return; }
       const recolor = e.target.closest('[data-recolor]');
       if (recolor) {
         const c = getStudy().courses.find((x) => x.id === recolor.dataset.recolor);
         if (!c) return;
-        const next = COURSE_COLORS[(COURSE_COLORS.indexOf(c.color) + 1) % COURSE_COLORS.length];
-        updateCourse(c.id, { color: next });
+        updateCourse(c.id, { color: COURSE_COLORS[(COURSE_COLORS.indexOf(c.color) + 1) % COURSE_COLORS.length] });
         redraw();
         return;
       }
       const remove = e.target.closest('[data-remove]');
       if (remove) {
         const c = getStudy().courses.find((x) => x.id === remove.dataset.remove);
-        if (!c || !confirm(`Remove ${c.name}? Its homework stays in the planner, just without a course.`)) return;
+        if (!c || !confirm(`Remove ${c.name}? Its class times go away. Its homework stays in the planner, just without a course.`)) return;
         deleteCourse(c.id);
         redraw();
       }
     });
+  });
+}
+
+// ---------- new deck ----------
+function openNewDeckSheet() {
+  const s = getStudy();
+  const html = `
+    <label class="field">Deck name<input name="name" maxlength="60" autocomplete="off" placeholder="Bio chapter 3 terms"></label>
+    <label class="field">Course
+      <select name="course">
+        <option value="">No course</option>
+        ${s.courses.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')}
+      </select>
+    </label>
+    <button type="button" class="btn-sketch btn-sketch--go btn-sketch--big" data-save>Make deck</button>`;
+  openSheet('New deck', html, (sheet, close) => {
+    const name = sheet.querySelector('[name="name"]');
+    name.focus();
+    const make = () => {
+      if (!name.value.trim()) { toast('Give the deck a name.'); return; }
+      const deck = addDeck({ name: name.value, courseId: sheet.querySelector('[name="course"]').value });
+      close();
+      openDeck(deck.id, { importNow: true });
+    };
+    name.addEventListener('keydown', (e) => { if (e.key === 'Enter') make(); });
+    sheet.querySelector('[data-save]').addEventListener('click', make);
   });
 }
 
@@ -417,6 +619,7 @@ async function openRemindersSheet() {
       ${sw('agenda', 'Morning list of what’s due')}
       <label class="field">Send it at<input type="time" data-pref-time="agendaTime" value="${esc(p.agendaTime)}"></label>
       ${sw('overdue', 'Include overdue things')}
+      ${sw('cards', 'Include flashcards that are due')}
       ${sw('nightBefore', 'Reminder the night before')}
       <label class="field">Send it at<input type="time" data-pref-time="nightTime" value="${esc(p.nightTime)}"></label>
       <label class="field">Warn me before exams
@@ -432,8 +635,7 @@ async function openRemindersSheet() {
   openSheet('Study reminders', html, (sheet) => {
     const save = async (patch) => {
       const current = await getProfile();
-      const study = { ...studyNotifyPrefs(current), ...patch };
-      await saveProfile({ notify: { ...current.notify, study } });
+      await saveProfile({ notify: { ...current.notify, study: { ...studyNotifyPrefs(current), ...patch } } });
     };
     sheet.addEventListener('change', (e) => {
       const el = e.target;
@@ -451,17 +653,22 @@ async function openRemindersSheet() {
 
 // ---------- small "coming up" card for the Pond ----------
 export function studyPeekHTML(today = todayKey()) {
-  const st = studyStatus(getStudy(), today);
+  const s = getStudy();
+  const st = studyStatus(s, today);
   const soon = st.open.filter((t) => t.due <= addDays(today, 3)).slice(0, 3);
-  if (!soon.length) return '';
+  const next = dayItems(s, today).find((i) => (i.kind === 'class' || i.kind === 'lab') && i.start >= nowHM());
+  const cards = totalDue(today);
+  if (!soon.length && !next && !cards) return '';
   return `
   <section class="study-peek" aria-label="Coming up">
     <div class="study-peek__head">
       <p class="study-peek__title">Coming up</p>
-      <a class="btn-plain" href="#/study">planner →</a>
+      <a class="btn-plain" href="#/study">study →</a>
     </div>
-    <ul>${soon.map((t) => `
-      <li><span>${esc(t.title)}</span><span class="${t.due < today ? 'is-late' : 'muted'}">${esc(dueLabel(t, today))}</span></li>`).join('')}
+    <ul>
+      ${next ? `<li><span>${esc(next.title)}${next.kind === 'lab' ? ' lab' : ''}</span><span class="muted">${esc(formatHM(next.start))}</span></li>` : ''}
+      ${soon.map((t) => `<li><span>${esc(t.title)}</span><span class="${t.due < today ? 'is-late' : 'muted'}">${esc(dueLabel(t, today))}</span></li>`).join('')}
+      ${cards ? `<li><span>Flashcards</span><span class="muted">${cards} due</span></li>` : ''}
     </ul>
   </section>`;
 }

@@ -229,14 +229,23 @@ export const toggleCheck = (taskId, itemId) => change((s) => {
 });
 
 // ---------- weekly repeats ----------
-const HORIZON = 21; // days ahead that repeats are filled in
+// A repeat is filled in all the way to its end date, so "every Friday until December" really is
+// every Friday. With no end date it runs to the end of the semester, or four months out.
+const MAX_COPIES = 300;
+
+function fillThrough(r, today) {
+  const cap = addDays(today, 400);
+  const fallback = readAll().settings?.end || addDays(today, 120);
+  const to = r.until || (fallback > today ? fallback : addDays(today, 120));
+  return to > cap ? cap : to;
+}
 
 function fillSeries(s, r, today) {
-  const last = addDays(today, HORIZON);
-  const to = r.until && r.until < last ? r.until : last;
+  const to = fillThrough(r, today);
   let k = r.filledTo ? addDays(r.filledTo, 1) : r.start;
   let added = 0;
-  for (; k <= to; k = addDays(k, 1)) {
+  let made = s.tasks.filter((t) => t.seriesId === r.id).length;
+  for (; k <= to && made < MAX_COPIES; k = addDays(k, 1)) {
     if (!r.days.includes(dayOfWeek(k))) continue;
     const id = `${r.id}:${k}`;
     if (s.tasks.some((t) => t.id === id)) continue;
@@ -245,6 +254,7 @@ function fillSeries(s, r, today) {
       done: false, doneAt: '', checklist: checklistFrom(r.checklist, id), notes: '',
     });
     added++;
+    made++;
   }
   if (to > (r.filledTo || '')) r.filledTo = to;
   return added;
@@ -291,12 +301,11 @@ export const updateSeries = (seriesId, patch, fromDue) => change((s) => {
   }
 });
 
-// Adds upcoming copies of weekly repeats. Only saves when something new was added.
+// Fills in any repeat that isn't complete yet. Only saves when something new was added.
 export function ensureSeries() {
   const today = todayKey();
-  const s = getStudy();
-  const target = addDays(today, HORIZON);
-  const behind = s.series.some((r) => (r.filledTo || '') < (r.until && r.until < target ? r.until : target));
+  const s = norm(readAll().study);
+  const behind = s.series.some((r) => (r.filledTo || '') < fillThrough(r, today));
   if (!behind) return;
   change((st) => { for (const r of st.series) fillSeries(st, r, today); }, false);
 }

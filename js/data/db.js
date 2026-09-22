@@ -43,7 +43,8 @@ export async function getSettings() {
 
 export async function saveSettings(settings) {
   const data = load();
-  data.settings = { ...settings, updatedAt: now() };
+  // key = the semester's lasting id (courses stay with it). Editing a semester keeps it.
+  data.settings = { ...settings, key: settings.key || data.settings?.key || newId(), updatedAt: now() };
   touch(data, 'settings');
   save(data);
 }
@@ -150,7 +151,7 @@ export async function startNewSemester(nextSettings) {
     });
   }
   tombstoneAll(data);
-  data.settings = { ...nextSettings, updatedAt: now() };
+  data.settings = { ...nextSettings, key: newId(), updatedAt: now() };
   touch(data, 'settings', 'archive');
   save(data);
 }
@@ -159,7 +160,7 @@ export async function startNewSemester(nextSettings) {
 // semester ahead of time. Not switched to; just sits in the archive until you do.
 export async function addFutureSemester(settings) {
   const data = load();
-  data.archive.push({ id: newId(), settings: { ...settings, updatedAt: now() }, entries: [] });
+  data.archive.push({ id: newId(), settings: { ...settings, key: newId(), updatedAt: now() }, entries: [] });
   touch(data, 'archive');
   save(data);
   return data.archive[data.archive.length - 1].id;
@@ -186,6 +187,18 @@ export async function switchSemester(id) {
   data.settings = { ...incoming.settings, updatedAt: now() };
   touch(data, 'settings', 'archive');
   save(data);
+}
+
+// The current semester's lasting id, made the first time it's needed.
+export function semesterKey() {
+  const data = load();
+  if (!data.settings) return '';
+  if (!data.settings.key) {
+    data.settings = { ...data.settings, key: newId() };
+    touch(data, 'settings');
+    save(data);
+  }
+  return data.settings.key;
 }
 
 // ---------- bulk (import / export) ----------

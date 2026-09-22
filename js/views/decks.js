@@ -1,8 +1,12 @@
 // Flashcard screens: one deck (cards, import), Review (spaced repetition), Flip through, and Quiz.
 import {
   getDeck, updateDeck, deleteDeck, resetProgress, addCards, updateCard, deleteCard, dueCards, gradeCard, markReviewed,
-  reviewStreak, buildQuiz, checkTyped, saveQuizResult, parseCardLines, parseCardCSV, MAX_BOX,
+  reviewStreak, buildQuiz, checkTyped, checkAny, saveQuizResult, parseCardLines, parseCardCSV, MAX_BOX,
+  cardFace, clozePrompt, clozeFilled, answerList, deckStats, isCloze,
 } from '../data/decks.js';
+import { shareDeck, unshareDeck, fetchShared, importShared, shareSize, SHARE_LIMIT } from '../data/share.js';
+import { userNow } from '../data/supabase.js';
+import { appUrl } from '../data/auth.js';
 import { getStudy } from '../data/study.js';
 import { getProfile } from '../data/db.js';
 import { frogSVG } from '../pip/frog.js';
@@ -23,6 +27,25 @@ export function openDeck(id, { importNow = false } = {}) {
 }
 
 const backToDecks = () => { try { sessionStorage.setItem('study:mode', 'decks'); } catch { /* ignore */ } location.hash = '#/study'; };
+const CARD_TYPES = { basic: 'Front and back', cloze: 'Fill in the blank', multi: 'Several answers' };
+
+// Pictures are shrunk to about 700px and saved with the card, so they sync and work offline.
+async function shrinkImage(file, max = 700, quality = 0.62) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((ok, fail) => { const i = new Image(); i.onload = () => ok(i); i.onerror = fail; i.src = url; });
+    const scale = Math.min(1, max / Math.max(img.width, img.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(img.width * scale);
+    canvas.height = Math.round(img.height * scale);
+    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/jpeg', quality);
+  } finally { URL.revokeObjectURL(url); }
+}
+
+const cardImg = (src, alt = '') => (src ? `<img class="card-img" src="${esc(src)}" alt="${esc(alt)}">` : '');
+const typeTag = (c) => (c.type && c.type !== 'basic' ? `<span class="dn-tag">${esc(c.type === 'cloze' ? 'blank' : 'multi')}</span>` : '');
+
 const boxDots = (c) => `<span class="box-dots" aria-label="Learned ${c.box || 0} of ${MAX_BOX}">${Array.from({ length: MAX_BOX }, (_, i) => `<i class="${i < (c.box || 0) ? 'on' : ''}"></i>`).join('')}</span>`;
 
 // ---------- one deck ----------
@@ -54,12 +77,14 @@ export async function renderDeck(root) {
     <div class="row">
       <button type="button" class="btn-plain" data-add-card>+ add a card</button>
       <button type="button" class="btn-plain" data-import>import a list</button>
+      <button type="button" class="btn-plain" data-stats>stats</button>
+      <button type="button" class="btn-plain" data-share>share</button>
     </div>
     ${deck.cards.length > 8 ? `<label class="field">Search<input type="search" data-search value="${esc(state.search)}" autocomplete="off"></label>` : ''}
     ${deck.cards.length ? `<ul class="card-list">${cards.map((c) => `
       <li><button type="button" class="card-row" data-card="${esc(c.id)}">
-        <span class="card-row__front">${esc(c.front)}</span>
-        <span class="card-row__back">${esc(c.back)}</span>
+        <span class="card-row__front">${c.img ? '📷 ' : ''}${esc(isCloze(c) ? clozePrompt(c.front) : c.front)} ${typeTag(c)}</span>
+        <span class="card-row__back">${esc(isCloze(c) ? clozeFilled(c.front) : c.back)}</span>
         ${boxDots(c)}
       </button></li>`).join('')}</ul>` : '<p class="card__hint">No cards yet. Tap "import a list" to paste a bunch at once.</p>'}
   </div>`;
@@ -83,6 +108,8 @@ export async function renderDeck(root) {
     }
     if (t.closest('[data-add-card]')) return openCardSheet(deck.id, null);
     if (t.closest('[data-import]')) return openImportSheet(deck.id);
+    if (t.closest('[data-stats]')) return openStatsSheet(deck.id);
+    if (t.closest('[data-share]')) return openShareSheet(deck.id);
     if (t.closest('[data-edit-deck]')) return openDeckSettings(deck.id);
     const card = t.closest('[data-card]');
     if (card) return openCardSheet(deck.id, deck.cards.find((c) => c.id === card.dataset.card));
@@ -94,16 +121,63 @@ export async function renderDeck(root) {
 
 function openCardSheet(deckIdValue, card) {
   const editing = Boolean(card);
+  let type = card?.type ?? 'basic';
+  let img = card?.img ?? '';
   const html = `
-    <label class="field">Front<textarea class="study-notes" name="front" rows="2">${esc(card?.front ?? '')}</textarea></label>
-    <label class="field">Back<textarea class="study-notes" name="back" rows="3">${esc(card?.back ?? '')}</textarea></label>
+    <div class="seg seg--3" role="group" aria-label="Card type">
+      ${Object.entries(CARD_TYPES).map(([k, label]) => `<button type="button" data-ctype="${k}" aria-pressed="${type === k}">${label}</button>`).join('')}
+    </div>
+    <p class="card__hint" data-type-hint></p>
+    <label class="field"><span data-front-label>Front</span><textarea class="study-notes" name="front" rows="2">${esc(card?.front ?? '')}</textarea></label>
+    <label class="field" data-back-row${type === 'cloze' ? ' hidden' : ''}><span data-back-label>Back</span><textarea class="study-notes" name="back" rows="3">${esc(card?.back ?? '')}</textarea></label>
+    <label class="row" data-both-row${type === 'cloze' ? ' hidden' : ''}><span>Ask it both ways</span><input type="checkbox" class="switch" name="both"${card?.both ? ' checked' : ''}></label>
+    <div class="card-img-row">
+      <div data-img-preview>${cardImg(img, 'Picture on this card')}</div>
+      <label class="field"><span class="field__label">Picture <span class="muted">(optional)</span></span><input type="file" name="pic" accept="image/*"></label>
+      ${img ? '' : ''}
+      <button type="button" class="btn-plain btn-plain--danger" data-rm-img${img ? '' : ' hidden'}>remove picture</button>
+    </div>
     <button type="button" class="btn-sketch btn-sketch--go btn-sketch--big" data-save>${editing ? 'Save' : 'Add card'}</button>
     ${editing ? '<button type="button" class="btn-plain btn-plain--danger" data-delete>delete card</button>' : '<p class="card__hint">The sheet stays open so you can keep adding.</p>'}`;
   openSheet(editing ? 'Edit card' : 'Add a card', html, (sheet, close) => {
     const front = sheet.querySelector('[name="front"]');
     const back = sheet.querySelector('[name="back"]');
+    const hint = sheet.querySelector('[data-type-hint]');
+    const paint = () => {
+      hint.textContent = type === 'cloze'
+        ? 'Put the hidden part in double braces: The capital of France is {{Paris}}.'
+        : type === 'multi' ? 'Put each answer on its own line, or split them with semicolons. Any one counts as right.'
+        : 'A normal card: a term on the front, its meaning on the back.';
+      sheet.querySelector('[data-front-label]').textContent = type === 'cloze' ? 'Sentence with blanks' : 'Front';
+      sheet.querySelector('[data-back-label]').textContent = type === 'multi' ? 'Answers' : 'Back';
+      sheet.querySelector('[data-back-row]').hidden = type === 'cloze';
+      sheet.querySelector('[data-both-row]').hidden = type !== 'basic';
+      sheet.querySelectorAll('[data-ctype]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.ctype === type)));
+    };
+    paint();
     front.focus();
+
+    sheet.querySelector('[name="pic"]').addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      try {
+        img = await shrinkImage(file);
+        if (img.length > 400_000) img = await shrinkImage(file, 500, 0.5);
+        sheet.querySelector('[data-img-preview]').innerHTML = cardImg(img, 'Picture on this card');
+        sheet.querySelector('[data-rm-img]').hidden = false;
+      } catch { toast('Couldn’t read that picture.'); }
+      e.target.value = '';
+    });
+
     sheet.addEventListener('click', (e) => {
+      const ct = e.target.closest('[data-ctype]');
+      if (ct) { type = ct.dataset.ctype; paint(); return; }
+      if (e.target.closest('[data-rm-img]')) {
+        img = '';
+        sheet.querySelector('[data-img-preview]').innerHTML = '';
+        e.target.hidden = true;
+        return;
+      }
       if (e.target.closest('[data-delete]')) {
         if (!confirm('Delete this card?')) return;
         deleteCard(deckIdValue, card.id);
@@ -111,15 +185,134 @@ function openCardSheet(deckIdValue, card) {
         return;
       }
       if (!e.target.closest('[data-save]')) return;
-      if (!front.value.trim() || !back.value.trim()) { toast('Fill in both sides.'); return; }
-      if (editing) { updateCard(deckIdValue, card.id, { front: front.value.trim(), back: back.value.trim() }); close(); return; }
-      addCards(deckIdValue, [[front.value.trim(), back.value.trim()]]);
+      const f = front.value.trim();
+      const b = back.value.trim();
+      if (!f) { toast('Fill in the front.'); return; }
+      if (type === 'cloze' && !/\{\{.+?\}\}/.test(f)) { toast('Wrap the hidden part in {{ }}.'); return; }
+      if (type !== 'cloze' && !b) { toast('Fill in both sides.'); return; }
+      const both = type === 'basic' && sheet.querySelector('[name="both"]').checked;
+      if (editing) { updateCard(deckIdValue, card.id, { front: f, back: type === 'cloze' ? '' : b, type, both, img }); close(); return; }
+      addCards(deckIdValue, [{ front: f, back: type === 'cloze' ? '' : b, type, both, img }]);
       play('pop');
       front.value = '';
       back.value = '';
+      img = '';
+      sheet.querySelector('[data-img-preview]').innerHTML = '';
+      sheet.querySelector('[data-rm-img]').hidden = true;
       front.focus();
     });
   });
+}
+
+// ---------- stats ----------
+function openStatsSheet(id) {
+  const deck = getDeck(id);
+  const st = deckStats(deck);
+  const most = Math.max(1, ...st.days.map((d) => d.n));
+  const pct = (n) => Math.round((n / most) * 100);
+  const html = `
+    <div class="stat-row">
+      <div><p class="gpa-card__num">${st.cards}</p><p class="muted">cards</p></div>
+      <div><p class="gpa-card__num">${st.learned}</p><p class="muted">learned</p></div>
+      <div><p class="gpa-card__num">${st.accuracy === null ? '--' : `${Math.round(st.accuracy * 100)}%`}</p><p class="muted">right</p></div>
+    </div>
+    <p class="card__hint">${st.due} due now · ${st.fresh} never seen · ${st.answered} answers so far${reviewStreak() > 1 ? ` · ${reviewStreak()}-day streak` : ''}</p>
+    <p class="fw-sub">Last two weeks</p>
+    <div class="spark">${st.days.map((d) => `<span class="spark__bar" style="--h:${pct(d.n)}%" title="${esc(d.d)}: ${d.n}"><i style="--h:${d.n ? Math.round((d.r / d.n) * 100) : 0}%"></i></span>`).join('')}</div>
+    <p class="card__hint">Bar height is how many cards you answered. The filled part is how many you got right.</p>
+    ${st.hardest.length ? `<p class="fw-sub">Hardest cards</p>
+      <ul class="grade-items">${st.hardest.map((c) => `<li><button type="button" data-hard="${esc(c.id)}">
+        <span class="grade-items__name">${esc(isCloze(c) ? clozePrompt(c.front) : c.front)}</span>
+        <span class="grade-items__score">${c.right || 0} right · ${c.wrong || 0} missed</span></button></li>`).join('')}</ul>`
+      : '<p class="card__hint">No misses yet. Review a few cards and they show up here.</p>'}`;
+  openSheet(`${deck.name} stats`, html, (sheet, close) => {
+    sheet.addEventListener('click', (e) => {
+      const h = e.target.closest('[data-hard]');
+      if (!h) return;
+      const card = getDeck(id)?.cards.find((c) => c.id === h.dataset.hard);
+      close();
+      if (card) openCardSheet(id, card);
+    });
+  });
+}
+
+// ---------- sharing ----------
+function openShareSheet(id) {
+  const deck = getDeck(id);
+  const kb = Math.round(shareSize(deck) / 1024);
+  const html = `
+    ${userNow() ? `
+      <p class="card__hint">Sharing puts a copy of this deck's cards online under a short code. Anyone with the code can copy it into their own decks. Your review progress and scores stay private.</p>
+      <div data-share-body><p class="card__hint">Checking…</p></div>
+      <p class="card__hint">${deck.cards.length} cards · about ${kb} KB${kb > Math.round(SHARE_LIMIT / 1024) ? ' · too big to share, remove some pictures' : ''}</p>`
+    : '<p class="card__hint">Sign in to share decks with friends.</p>'}
+    <p class="fw-sub">Have a code?</p>
+    <div class="row">
+      <label class="field grow"><span class="field__label">Deck code</span><input name="code" maxlength="8" autocomplete="off" autocapitalize="characters" placeholder="AB12CD"></label>
+      <button type="button" class="btn-sketch btn-sketch--small" data-get>copy it</button>
+    </div>`;
+  openSheet('Share this deck', html, (sheet, close) => {
+    const body = sheet.querySelector('[data-share-body]');
+    let code = '';
+    const paint = () => {
+      if (!body) return;
+      body.innerHTML = code ? `
+        <p>Code: <code class="shortcut__url">${esc(code)}</code></p>
+        <div class="row">
+          <button type="button" class="btn-plain" data-copy>copy link</button>
+          <button type="button" class="btn-plain" data-update>update the shared copy</button>
+          <button type="button" class="btn-plain btn-plain--danger" data-stop>stop sharing</button>
+        </div>`
+        : '<button type="button" class="btn-sketch btn-sketch--go" data-publish>share this deck</button>';
+    };
+    if (userNow()) {
+      import('../data/share.js').then(({ myShares }) => myShares()).then((rows) => {
+        code = (rows ?? []).find((r) => r.name === deck.name)?.code ?? '';
+        paint();
+      }).catch(() => paint());
+    }
+    sheet.addEventListener('click', async (e) => {
+      const t = e.target;
+      if (t.closest('[data-publish]') || t.closest('[data-update]')) {
+        t.closest('button').disabled = true;
+        try {
+          code = await shareDeck(id, code || null);
+          paint();
+          play('ribbit');
+          toast('Shared! Send the code or link to a friend.');
+        } catch (err) { toast(err.message); t.closest('button').disabled = false; }
+        return;
+      }
+      if (t.closest('[data-copy]')) {
+        const link = `${appUrl()}?deck=${code}`;
+        try { await navigator.clipboard.writeText(link); toast('Link copied!'); } catch { toast(link); }
+        return;
+      }
+      if (t.closest('[data-stop]')) {
+        if (!confirm('Stop sharing this deck? The code stops working.')) return;
+        try { await unshareDeck(code); code = ''; paint(); toast('Not shared any more.'); } catch (err) { toast(err.message); }
+        return;
+      }
+      if (!t.closest('[data-get]')) return;
+      const typed = sheet.querySelector('[name="code"]').value.trim();
+      if (!typed) { toast('Type the code a friend gave you.'); return; }
+      close();
+      await importByCode(typed);
+    });
+  });
+}
+
+// Copies a shared deck into your own decks, by code.
+export async function importByCode(code) {
+  if (!userNow()) { toast('Sign in to copy a shared deck.'); return; }
+  try {
+    const row = await fetchShared(code);
+    if (!confirm(`Copy "${row.name}" (${row.cards} cards)${row.owner_name ? ` from ${row.owner_name}` : ''} into your decks?`)) return;
+    const { deck, count } = importShared(row);
+    play('ribbit');
+    toast(`Copied ${count} ${count === 1 ? 'card' : 'cards'}.`);
+    openDeck(deck.id);
+  } catch (err) { toast(err.message); }
 }
 
 function openImportSheet(deckIdValue) {
@@ -227,7 +420,8 @@ export async function renderReview(root) {
   if (!deck) { backToDecks(); return; }
   if (!state.review || state.review.deckId !== deck.id) {
     const queue = [...dueCards(deck)].sort(() => Math.random() - 0.5).map((c) => c.id);
-    state.review = { deckId: deck.id, queue, shown: false, done: 0, firstTry: 0, missedOnce: new Set(), total: queue.length };
+    // Cards set to "ask both ways" come up front-to-back or back-to-front, picked when the card comes up.
+    state.review = { deckId: deck.id, queue, dirs: {}, shown: false, done: 0, firstTry: 0, missedOnce: new Set(), total: queue.length };
   }
   const r = state.review;
   if (!r.queue.length) {
@@ -244,6 +438,8 @@ export async function renderReview(root) {
   }
   const card = deck.cards.find((c) => c.id === r.queue[0]);
   if (!card) { r.queue.shift(); return renderReview(root); }
+  r.dirs[card.id] ??= card.both && Math.random() < 0.5 ? 'back' : 'front';
+  const face = cardFace(card, r.dirs[card.id]);
 
   root.innerHTML = `
   <div class="session">
@@ -253,8 +449,10 @@ export async function renderReview(root) {
       <span class="spacer"></span>
     </div>
     <button type="button" class="flash${r.shown ? ' is-shown' : ''}" data-reveal aria-live="polite">
-      <span class="flash__front">${esc(card.front)}</span>
-      ${r.shown ? `<span class="flash__back">${esc(card.back)}</span>` : '<span class="flash__hint">tap to show the answer</span>'}
+      ${cardImg(card.img)}
+      <span class="flash__front">${esc(face.ask)}</span>
+      ${r.shown ? `<span class="flash__back">${esc(face.reveal)}</span>` : '<span class="flash__hint">tap to show the answer</span>'}
+      ${!r.shown && card.type === 'multi' && face.answers.length > 1 ? `<span class="flash__hint">${face.answers.length} answers</span>` : ''}
     </button>
     ${r.shown ? `
     <div class="grade">
@@ -306,7 +504,8 @@ export async function renderFlip(root) {
     </div>
     <button type="button" class="flash flash--flip${showBack ? ' is-back' : ''}" data-flip>
       <span class="flash__side">${showBack ? 'back' : 'front'}</span>
-      <span class="flash__front">${esc(showBack ? card.back : card.front)}</span>
+      ${cardImg(card.img)}
+      <span class="flash__front">${esc(isCloze(card) ? (showBack ? clozeFilled(card.front) : clozePrompt(card.front)) : showBack ? card.back : card.front)}</span>
       <span class="flash__hint">tap to flip</span>
     </button>
     <div class="grade">
@@ -398,7 +597,7 @@ export async function renderQuiz(root) {
       title: `${z.right} / ${z.questions.length}`,
       lines: [
         pct === 1 ? 'Perfect score!' : pct >= 0.8 ? 'Nice work.' : 'Keep at it. Retrying the missed ones helps a lot.',
-        missedCards.length ? `<ul class="missed-list">${missedCards.map((c) => `<li><b>${esc(c.front)}</b> · ${esc(c.back)}</li>`).join('')}</ul>` : '',
+        missedCards.length ? `<ul class="missed-list">${missedCards.map((c) => `<li><b>${esc(isCloze(c) ? clozePrompt(c.front) : c.front)}</b> · ${esc(isCloze(c) ? clozeFilled(c.front) : c.back)}</li>`).join('')}</ul>` : '',
       ],
       buttons: `
         ${missedCards.length ? `<button type="button" class="btn-sketch btn-sketch--go" data-retry>retry the ${missedCards.length} I missed</button>` : ''}
@@ -427,7 +626,7 @@ export async function renderQuiz(root) {
       <p class="eyebrow">${z.i + 1} of ${z.questions.length} · ${z.right} right</p>
       <span class="spacer"></span>
     </div>
-    <div class="flash flash--ask"><span class="flash__front">${esc(q.ask)}</span></div>
+    <div class="flash flash--ask">${cardImg(q.img)}<span class="flash__front">${esc(q.ask)}</span>${q.note ? `<span class="flash__hint">${esc(q.note)}</span>` : ''}</div>
     ${q.kind === 'choice' ? `
       <div class="choices">${q.options.map((o, n) => `
         <button type="button" class="choice${a ? (o === q.answer ? ' is-right' : o === a.given ? ' is-wrong' : '') : ''}" data-choice="${n}"${a ? ' disabled' : ''}>${esc(o)}</button>`).join('')}
@@ -464,7 +663,7 @@ export async function renderQuiz(root) {
     e.preventDefault();
     const given = e.target.answer.value;
     if (!given.trim()) { toast('Type an answer, or give it your best guess.'); return; }
-    answer(given, checkTyped(given, q.answer));
+    answer(given, q.answers?.length > 1 ? checkAny(given, q.answers) : checkTyped(given, q.answer));
   });
   page.querySelector('[data-typed] input:not([disabled])')?.focus();
   page.addEventListener('click', (e) => {

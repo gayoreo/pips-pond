@@ -1,6 +1,6 @@
 // Study planner data: courses, tasks (homework, assignments, exams, readings) and weekly repeats.
 // Saved with the rest of your pond and synced as one piece called "study".
-import { readAll, writeAll, newId } from './db.js';
+import { readAll, writeAll, newId, semesterKey } from './db.js';
 import { todayKey, addDays, dayOfWeek, fromKey, formatShort, formatHM, toKey } from '../core/dates.js';
 import { cardsDueMap } from './decks.js';
 
@@ -44,7 +44,27 @@ function norm(s) {
   };
 }
 
-export const getStudy = () => norm(readAll().study);
+// Courses belong to a semester (semKey = that semester's lasting id). Only the current semester's
+// courses, and their homework, show up. Switching semesters just changes which ones you see.
+function forSemester(s, data) {
+  const cur = data.settings?.key || '';
+  const known = new Set([cur, ...(data.archive ?? []).map((a) => a.settings?.key).filter(Boolean)]);
+  const mine = (c) => !c.semKey || c.semKey === cur || !known.has(c.semKey);
+  const hidden = new Set(s.courses.filter((c) => !mine(c)).map((c) => c.id));
+  return { ...s, courses: s.courses.filter(mine), tasks: s.tasks.filter((t) => !hidden.has(t.courseId)), allCourses: s.courses };
+}
+
+export const getStudy = () => { const data = readAll(); return forSemester(norm(data.study), data); };
+
+// Every course made before semesters were tracked joins the current semester (once).
+export function ensureCourseSemesters() {
+  const key = semesterKey();
+  if (!key || !norm(readAll().study).courses.some((c) => !c.semKey)) return;
+  change((st) => { for (const c of st.courses) if (!c.semKey) c.semKey = key; }, false);
+}
+
+// Courses that belong to one semester (by its lasting id), for past semesters and exports.
+export const coursesForSemester = (key) => (key ? norm(readAll().study).courses.filter((c) => c.semKey === key) : []);
 
 // Runs `fn` on a copy of the study data, saves it, and marks it for syncing.
 function change(fn, notify = true) {
@@ -60,11 +80,11 @@ function change(fn, notify = true) {
 export const studyNotifyPrefs = (profile) => ({ ...DEFAULT_STUDY_NOTIFY, ...(profile?.notify?.study ?? {}) });
 
 // ---------- courses ----------
-export const addCourse = ({ name, color }) => change((s) => {
-  const course = { id: newId(), name: name.trim(), color: color || COURSE_COLORS[s.courses.length % COURSE_COLORS.length] };
+export const addCourse = ({ name, color }) => { const semKey = semesterKey(); return change((s) => {
+  const course = { id: newId(), semKey, name: name.trim(), color: color || COURSE_COLORS[s.courses.length % COURSE_COLORS.length] };
   s.courses.push(course);
   return course;
-});
+}); };
 
 export const updateCourse = (id, patch) => change((s) => {
   const c = s.courses.find((x) => x.id === id);
@@ -74,14 +94,14 @@ export const updateCourse = (id, patch) => change((s) => {
 // Saves a whole course from the setup screens: name, code, color, class and lab times,
 // plus any new exams, assignments and readings. Returns the course.
 // meetings: [{ kind: 'class' | 'lab', days: [0-6], start: 'HH:MM', end: 'HH:MM', place }]
-export const saveCourse = ({ id, name, code = '', color, meetings = [] }, newTasks = []) => change((s) => {
+export const saveCourse = ({ id, name, code = '', color, meetings = [] }, newTasks = []) => { const semKey = semesterKey(); return change((s) => {
   let course = id ? s.courses.find((c) => c.id === id) : null;
   const clean = meetings
     .filter((m) => m.days?.length && m.start)
     .map((m) => ({ id: m.id || newId(), kind: m.kind === 'lab' ? 'lab' : 'class', days: [...m.days].sort(), start: m.start, end: m.end || '', place: (m.place || '').trim() }));
   if (course) Object.assign(course, { name: name.trim(), code: code.trim(), color: color || course.color, meetings: clean });
   else {
-    course = { id: newId(), name: name.trim(), code: code.trim(), color: color || COURSE_COLORS[s.courses.length % COURSE_COLORS.length], meetings: clean };
+    course = { id: newId(), semKey, name: name.trim(), code: code.trim(), color: color || COURSE_COLORS[s.courses.length % COURSE_COLORS.length], meetings: clean };
     s.courses.push(course);
   }
   for (const t of newTasks) {
@@ -91,12 +111,70 @@ export const saveCourse = ({ id, name, code = '', color, meetings = [] }, newTas
     });
   }
   return course;
-});
+}); };
 
 export const deleteCourse = (id) => change((s) => {
   s.courses = s.courses.filter((c) => c.id !== id);
   for (const t of s.tasks) if (t.courseId === id) t.courseId = '';
   for (const r of s.series) if (r.courseId === id) r.courseId = '';
+});
+
+// ---------- grades ----------
+// course.grading = { mode, categories: [{ id, name, weight, drop, bonus }], scale, credits, passFail, passMin, replaceLowest, examCat }
+// course.grades  = [{ id, name, catId, earned, possible, status: 'graded'|'pending'|'excused', extra, isFinal, taskId }]
+// course.extras  = [{ id, kind: 'points'|'percent', amount, note }]
+const findCourse = (s, id) => s.courses.find((c) => c.id === id);
+
+export const saveGrading = (courseId, grading) => change((s) => {
+  const c = findCourse(s, courseId);
+  if (!c) return;
+  const cats = (grading.categories ?? []).map((x) => ({ ...x, id: x.id || newId(), name: (x.name || '').trim() || 'Category' }));
+  c.grading = { ...(c.grading ?? {}), ...grading, categories: cats };
+  const ids = new Set(cats.map((x) => x.id));
+  for (const it of c.grades ?? []) if (!ids.has(it.catId)) it.catId = cats[0]?.id ?? '';
+});
+
+export const saveGradeItem = (courseId, item) => change((s) => {
+  const c = findCourse(s, courseId);
+  if (!c) return null;
+  c.grades ??= [];
+  const clean = { status: 'graded', extra: '', ...item, id: item.id || newId(), name: (item.name || '').trim() || 'Untitled' };
+  if (clean.isFinal) for (const it of c.grades) if (it.id !== clean.id) it.isFinal = false;
+  const i = c.grades.findIndex((x) => x.id === clean.id);
+  if (i >= 0) c.grades[i] = clean; else c.grades.push(clean);
+  return clean;
+});
+
+export const deleteGradeItem = (courseId, itemId) => change((s) => {
+  const c = findCourse(s, courseId);
+  if (c) c.grades = (c.grades ?? []).filter((x) => x.id !== itemId);
+});
+
+export const saveExtra = (courseId, extra) => change((s) => {
+  const c = findCourse(s, courseId);
+  if (!c) return;
+  c.extras ??= [];
+  const clean = { ...extra, id: extra.id || newId() };
+  const i = c.extras.findIndex((x) => x.id === clean.id);
+  if (i >= 0) c.extras[i] = clean; else c.extras.push(clean);
+});
+
+export const deleteExtra = (courseId, extraId) => change((s) => {
+  const c = findCourse(s, courseId);
+  if (c) c.extras = (c.extras ?? []).filter((x) => x.id !== extraId);
+});
+
+// Finished homework, assignments and exams that don't have a score yet.
+export function needsScore(s) {
+  const courses = Object.fromEntries(s.courses.map((c) => [c.id, c]));
+  return liveTasks(s).filter((t) => t.done && !t.noScore && t.type !== 'reading' && courses[t.courseId]
+    && !(courses[t.courseId].grades ?? []).some((g) => g.taskId === t.id))
+    .sort((a, b) => a.due.localeCompare(b.due));
+}
+
+export const skipScore = (taskId) => change((s) => {
+  const t = s.tasks.find((x) => x.id === taskId);
+  if (t) t.noScore = true;
 });
 
 // ---------- tasks ----------
@@ -419,7 +497,7 @@ export function studyPipLine(st, today = todayKey()) {
 
 // The part of the planner the reminder server needs (next two weeks plus anything overdue).
 export function studyForPush(data) {
-  const s = norm(data.study);
+  const s = forSemester(norm(data.study), data);
   const until = addDays(todayKey(), 14);
   const names = Object.fromEntries(s.courses.map((c) => [c.id, c.name]));
   return {
@@ -461,7 +539,7 @@ export function scheduleForFriends(data) {
   const rules = shareRulesOf(data.profile);
   const any = (cat) => rules.all[cat] || Object.values(rules.people).some((r) => r[cat]);
   const place = (p) => (any('place') && p ? { place: String(p).slice(0, 60) } : {});
-  const s = norm(data.study);
+  const s = forSemester(norm(data.study), data);
   const today = todayKey();
   const horizon = addDays(today, 60);
   const out = [];

@@ -1015,3 +1015,82 @@ body.is-locked { overflow: hidden; }
 .fs-pings { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .fs-section { margin-top: 14px; }
 .fs-section .row { align-items: flex-end; }
+
+/* ==================== Grades, course page, search ==================== */
+.seg--4 { grid-template-columns: repeat(4, 1fr); }
+.seg--4 button { min-height: 40px; padding: 0 4px; font-size: 16px; }
+.study__head .row { gap: 6px; flex-wrap: nowrap; }
+.study__search { font-size: 20px; min-width: 40px; }
+
+.gpa-card { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.gpa-card > div { flex: 1; min-width: 90px; }
+.gpa-card p { margin: 0; }
+.gpa-card__num { font-family: var(--font-hand); font-size: 34px; font-weight: 700; line-height: 1; }
+.gpa-scale { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px 10px; }
+
+.grade-courses { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.grade-course { width: 100%; display: flex; align-items: center; gap: 10px; text-align: left; font: inherit; color: inherit; cursor: pointer;
+  background: var(--card); border: 2px solid var(--ink); border-left: 10px solid var(--course); border-radius: var(--wobble-2); padding: 10px 12px; }
+.grade-course__name { flex: 1; min-width: 0; display: flex; flex-direction: column; font-weight: 800; }
+.grade-course__name .muted { font-weight: 400; font-size: 13px; }
+.grade-course__pct { font-weight: 800; }
+.grade-course__letter { font-family: var(--font-hand); font-size: 26px; font-weight: 700; min-width: 36px; text-align: right; }
+
+.needs-list, .plain-list, .search-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.needs-list li { display: flex; align-items: center; gap: 6px; }
+.needs-list li > span { flex: 1; min-width: 0; }
+.search-list button { width: 100%; text-align: left; background: none; border: 0; border-bottom: 1px dashed var(--tape); padding: 6px 0; font: inherit; color: inherit; cursor: pointer; }
+
+.course-page .grade-hero { display: flex; align-items: center; justify-content: space-between; border-left: 10px solid var(--course); }
+.grade-hero p { margin: 0; }
+.grade-hero__pct { font-family: var(--font-hand); font-size: 40px; font-weight: 700; line-height: 1; }
+.grade-hero__letter { font-family: var(--font-hand); font-size: 56px; font-weight: 700; line-height: 1; }
+.grade-cat__head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.grade-cat__head .card__title .muted { font-size: 13px; font-weight: 400; }
+.grade-cat__pct { font-weight: 800; }
+.grade-items { list-style: none; margin: 4px 0; padding: 0; }
+.grade-items button { width: 100%; display: flex; gap: 8px; align-items: baseline; text-align: left; background: none; border: 0; border-bottom: 1px dashed var(--tape); padding: 6px 0; font: inherit; color: inherit; cursor: pointer; }
+.grade-items__name { flex: 1; min-width: 0; }
+.grade-items__score { font-size: 14px; }
+.grade-items__pct { min-width: 52px; text-align: right; font-weight: 800; font-size: 14px; }
+.grade-items .is-excused, .grade-items .is-dropped { opacity: 0.55; }
+.need-answer { font-size: 17px; margin: 6px 0; }
+
+.grade-row { display: flex; gap: 6px; align-items: center; }
+.grade-row input { min-width: 0; border: 0; border-bottom: 2px solid var(--ink); background: transparent; font: inherit; padding: 4px 2px; }
+.grade-row input[data-c="name"] { flex: 2; }
+.grade-row input[data-c="weight"], .grade-row input[data-c="drop"] { flex: 0 0 52px; }
+.grade-row__bonus { display: flex; align-items: center; gap: 2px; font-size: 13px; white-space: nowrap; }
+.grade-row--scale input[data-s="letter"] { flex: 0 0 48px; }
+.grade-row--scale input[data-s="min"] { flex: 0 0 60px; }
+
+/* ==================== Dining ==================== */
+.dn-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.dn-place.is-fav { border-width: 3px; }
+.dn-place__head { display: flex; align-items: flex-start; gap: 8px; }
+.dn-place__who { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.dn-place__who b { font-size: 17px; }
+.dn-place__who .muted { font-size: 13px; }
+.dn-star { font-size: 24px; min-width: 40px; }
+.dn-chip { align-self: flex-start; font-size: 12px; font-weight: 800; border: 2px solid var(--ink); border-radius: 999px; padding: 1px 8px; background: var(--yellow-note); }
+.dn-chip--open { background: var(--green-fill); }
+.dn-chip--closed { background: var(--card); opacity: 0.7; }
+.dn-menu { margin-top: 8px; }
+.dn-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.dn-items li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; border-bottom: 1px dashed var(--tape); padding: 4px 0; }
+.dn-items li > span:first-child { flex: 1 1 60%; min-width: 0; }
+.dn-tag { font-size: 11px; font-weight: 700; border: 1px solid var(--ink); border-radius: 999px; padding: 0 6px; }
+.dn-gap p { margin: 2px 0; }
+.dn-diets { grid-template-columns: repeat(2, 1fr); }
+
+/* ==================== Flashcards: pictures, stats, sharing ==================== */
+.card-img { display: block; max-width: 100%; max-height: 220px; margin: 0 auto 8px; border: 2px solid var(--ink); border-radius: var(--wobble-2); object-fit: contain; }
+.flash .card-img { max-height: 180px; }
+.card-img-row { display: flex; flex-direction: column; gap: 6px; }
+.card-row__front .dn-tag { margin-left: 4px; }
+.stat-row { display: flex; gap: 14px; text-align: center; }
+.stat-row > div { flex: 1; }
+.stat-row p { margin: 0; }
+.spark { display: flex; align-items: flex-end; gap: 3px; height: 70px; padding: 4px; border: 2px solid var(--ink); border-radius: var(--wobble-2); background: var(--card); }
+.spark__bar { flex: 1; height: var(--h, 0%); min-height: 2px; background: var(--tape); border-radius: 3px 3px 0 0; display: flex; align-items: flex-end; }
+.spark__bar i { display: block; width: 100%; height: var(--h, 0%); background: var(--green-fill); border-radius: 3px 3px 0 0; }

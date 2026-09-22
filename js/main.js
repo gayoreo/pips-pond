@@ -13,6 +13,7 @@ import { initStatus } from './ui/status.js';
 // Loaded for their side effects: they register after-sync / sign-out hooks.
 import './data/social.js';
 import './data/push.js';
+import { savePendingShare } from './data/share.js';
 
 applyTheme(getTheme());
 initInfo();
@@ -21,6 +22,8 @@ const goto = (hash) => history.replaceState(null, '', location.pathname + hash);
 const params = new URLSearchParams(location.search);
 let startUser = null;
 let ready = false;
+
+if (params.get('deck')) savePendingShare(params.get('deck'));
 
 if (cloudEnabled) {
   captureInvite(params);

@@ -2,6 +2,25 @@ import { getSettings, getEntries, getArchive, getProfile, switchSemester } from 
 import { reportStats, rolloverFor, nextSemesterDefaults } from '../core/semester.js';
 import { formatShort, todayKey } from '../core/dates.js';
 import { entriesCSV, download, slug } from '../data/importExport.js';
+import { coursesForSemester } from '../data/study.js';
+import { courseGrade, gradingOf, gpaOf, fmtPct, fmtGpa, DEFAULT_GPA_SCALE } from '../core/grades.js';
+
+// Final grades for one semester's courses, and a CSV of them.
+function gradeRows(key) {
+  return coursesForSemester(key).map((course) => ({ course, ...courseGrade(course) }));
+}
+function gradesCSV(name, rows, scale) {
+  const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const lines = [['Semester', 'Course', 'Code', 'Credits', 'Pass/fail', 'Percent', 'Letter', 'Grade points'].map(q).join(',')];
+  for (const r of rows) {
+    const g = gradingOf(r.course);
+    lines.push([name, r.course.name, r.course.code || '', g.credits ?? '', g.passFail ? 'yes' : 'no',
+      r.pct ?? '', r.letter, g.passFail || !r.letter ? '' : (scale[r.letter] ?? '')].map(q).join(','));
+  }
+  const { gpa } = gpaOf(rows, scale);
+  if (gpa !== null) lines.push(['', 'Semester GPA', '', '', '', '', '', fmtGpa(gpa)].map(q).join(','));
+  return lines.join('\n');
+}
 import { esc, money, plural } from '../ui/dom.js';
 import { reportHTML } from '../ui/report.js';
 import { beginNewSemester, beginFutureSemester } from './tutorial.js';
@@ -31,7 +50,9 @@ export async function renderSemesters(root) {
         ${current ? '' : `<button type="button" class="btn-plain" data-switch="${esc(id)}">switch to this</button>`}
         ${isFuture ? '' : `<button type="button" class="btn-plain" data-report="${esc(id)}" aria-expanded="${openReports.has(id)}">${openReports.has(id) ? 'hide' : 'report card'}</button>
         <button type="button" class="btn-plain" data-csv="${esc(id)}">download CSV</button>`}
+        ${gradeRows(s.key).length ? `<button type="button" class="btn-plain" data-grades-csv="${esc(id)}">download grades</button>` : ''}
       </div>
+      ${gradeRows(s.key).length ? `<p class="card__hint">${gradeRows(s.key).map((r) => `${esc(r.course.name)} ${esc(r.letter || fmtPct(r.pct))}`).join(' · ')}</p>` : ''}
       ${!isFuture && openReports.has(id) ? reportHTML(reportStats(s, list), { frogName: profile.frogName }) : ''}
     </section>`;
 
@@ -81,6 +102,15 @@ export async function renderSemesters(root) {
       const sem = id === 'current' ? { settings, entries } : archive.find((a) => a.id === id);
       if (!sem) return;
       download(`${slug(sem.settings.semesterName)}.csv`, entriesCSV([{ name: sem.settings.semesterName, entries: sem.entries }]), 'text/csv');
+      return;
+    }
+    const gcsv = e.target.closest('[data-grades-csv]');
+    if (gcsv) {
+      const id = gcsv.dataset.gradesCsv;
+      const sem = id === 'current' ? { settings } : archive.find((a) => a.id === id);
+      if (!sem) return;
+      const scale = { ...DEFAULT_GPA_SCALE, ...(profile.gpa?.scale ?? {}) };
+      download(`${slug(sem.settings.semesterName)}-grades.csv`, gradesCSV(sem.settings.semesterName, gradeRows(sem.settings.key), scale), 'text/csv');
       return;
     }
     const sw = e.target.closest('[data-switch]');

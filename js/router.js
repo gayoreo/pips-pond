@@ -10,6 +10,8 @@ import { renderSignup, renderFinishAccount } from './views/signup.js';
 import { renderFriends } from './views/friends.js';
 import { renderStudy } from './views/study.js';
 import { renderCourseSetup } from './views/courseSetup.js';
+import { renderCourse } from './views/course.js';
+import { renderDining } from './views/dining.js';
 import { renderDeck, renderReview, renderFlip, renderQuiz } from './views/decks.js';
 import { CHANGE_EVENT } from './data/db.js';
 import { mayUseApp } from './data/auth.js';
@@ -19,7 +21,9 @@ const routes = {
   '#/pond':      { label: 'Pond',      render: renderPond,      tab: true, live: true },
   '#/log':       { label: 'Log',       render: renderLog,       tab: true, live: true },
   '#/study':     { label: 'Study',     render: renderStudy,     tab: true, live: true },
+  '#/dining':    { label: 'Dining',    render: renderDining,    tab: true },
   '#/deck':      { label: 'Deck',      render: renderDeck,      live: true },
+  '#/course':    { label: 'Course',    render: renderCourse,    live: true },
   '#/review':    { label: 'Review',    render: renderReview,    bare: true },
   '#/flip':      { label: 'Flip',      render: renderFlip,      bare: true },
   '#/quiz':      { label: 'Quiz',      render: renderQuiz,      bare: true },

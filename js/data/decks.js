@@ -25,7 +25,33 @@ function change(fn, notify = true) {
 }
 
 const find = (st, id) => st.decks.find((d) => d.id === id);
-const newCard = (front, back) => ({ id: newId(), front, back, box: 0, due: todayKey(), right: 0, wrong: 0, seen: '' });
+// type: 'basic' | 'cloze' (blanks in {{ }}) | 'multi' (several answers, split by ; or new lines)
+// both: also ask back to front. img: a small picture saved with the card.
+const newCard = (front, back, extra = {}) => ({
+  id: newId(), front, back, type: 'basic', both: false, img: '', ...extra,
+  box: 0, due: todayKey(), right: 0, wrong: 0, seen: '',
+});
+
+// ---------- card types ----------
+const BLANK = /\{\{(.+?)\}\}/g;
+export const isCloze = (c) => c.type === 'cloze' && /\{\{.+?\}\}/.test(String(c.front ?? ''));
+export const clozeBlanks = (text) => [...String(text ?? '').matchAll(BLANK)].map((m) => m[1].trim());
+export const clozePrompt = (text) => String(text ?? '').replace(BLANK, '_____');
+export const clozeFilled = (text) => String(text ?? '').replace(BLANK, (_, x) => x.trim());
+export const answerList = (back) => String(back ?? '').split(/;|\n/).map((x) => x.trim()).filter(Boolean);
+
+// What the card asks and what counts as right, in one direction.
+export function cardFace(card, dir = 'front') {
+  if (card.type === 'cloze' && clozeBlanks(card.front).length) {
+    return { ask: clozePrompt(card.front), answer: clozeBlanks(card.front).join(', '), reveal: clozeFilled(card.front), answers: clozeBlanks(card.front) };
+  }
+  if (dir === 'back') return { ask: card.back, answer: card.front, reveal: card.front, answers: [card.front] };
+  if (card.type === 'multi') {
+    const answers = answerList(card.back);
+    return { ask: card.front, answer: answers.join(', '), reveal: answers.join(', '), answers };
+  }
+  return { ask: card.front, answer: card.back, reveal: card.back, answers: [card.back] };
+}
 
 // ---------- decks ----------
 export const addDeck = ({ name, courseId = '' }) => change((st) => {
@@ -44,11 +70,15 @@ export const resetProgress = (id) => change((st) => {
 });
 
 // ---------- cards ----------
-export const addCards = (deckId, pairs) => change((st) => {
+// Each entry is [front, back] or { front, back, type, both, img }.
+export const addCards = (deckId, list) => change((st) => {
   const d = find(st, deckId);
   if (!d) return 0;
-  for (const [front, back] of pairs) d.cards.push(newCard(front, back));
-  return pairs.length;
+  for (const entry of list) {
+    if (Array.isArray(entry)) d.cards.push(newCard(entry[0], entry[1]));
+    else d.cards.push(newCard(entry.front, entry.back, { type: entry.type ?? 'basic', both: Boolean(entry.both), img: entry.img ?? '' }));
+  }
+  return list.length;
 });
 
 export const updateCard = (deckId, cardId, patch) => change((st) => {
@@ -66,9 +96,15 @@ export const dueCards = (deck, today = todayKey()) => deck.cards.filter((c) => (
 export const totalDue = (today = todayKey()) => getDecks().reduce((n, d) => n + dueCards(d, today).length, 0);
 
 export const gradeCard = (deckId, cardId, correct) => change((st) => {
-  const c = find(st, deckId)?.cards.find((x) => x.id === cardId);
+  const d = find(st, deckId);
+  const c = d?.cards.find((x) => x.id === cardId);
   if (!c) return;
   const today = todayKey();
+  // Day by day counts, for the stats screen.
+  d.log = (d.log ?? []).filter((x) => x.d > addDays(today, -60));
+  const row = d.log.find((x) => x.d === today) ?? (d.log.push({ d: today, n: 0, r: 0 }), d.log[d.log.length - 1]);
+  row.n += 1;
+  if (correct) row.r += 1;
   if (correct) { c.box = Math.min((c.box || 0) + 1, MAX_BOX); c.right = (c.right || 0) + 1; }
   else { c.box = 0; c.wrong = (c.wrong || 0) + 1; }
   c.due = addDays(today, BOX_DAYS[c.box]);
@@ -91,6 +127,29 @@ export function reviewStreak(today = todayKey()) {
   return n;
 }
 
+// ---------- stats ----------
+// { cards, learned, due, new, accuracy (0-1 or null), answered, hardest: [cards], days: [{ d, n, r }] }
+export function deckStats(deck, today = todayKey()) {
+  const cards = deck.cards ?? [];
+  const right = cards.reduce((n, c) => n + (c.right || 0), 0);
+  const wrong = cards.reduce((n, c) => n + (c.wrong || 0), 0);
+  const days = [];
+  for (let i = 13; i >= 0; i--) {
+    const d = addDays(today, -i);
+    days.push((deck.log ?? []).find((x) => x.d === d) ?? { d, n: 0, r: 0 });
+  }
+  return {
+    cards: cards.length,
+    learned: cards.filter((c) => (c.box || 0) >= 3).length,
+    due: dueCards(deck, today).length,
+    fresh: cards.filter((c) => !c.seen).length,
+    answered: right + wrong,
+    accuracy: right + wrong ? right / (right + wrong) : null,
+    hardest: [...cards].filter((c) => (c.wrong || 0) > 0).sort((a, b) => (b.wrong - b.right) - (a.wrong - a.right)).slice(0, 5),
+    days,
+  };
+}
+
 // ---------- quizzes ----------
 const shuffle = (list) => {
   const a = [...list];
@@ -100,22 +159,25 @@ const shuffle = (list) => {
 
 // mode: 'choice' | 'type' | 'mix'. direction: 'front' (show front, answer back) or 'back'.
 export function buildQuiz(deck, { mode = 'mix', direction = 'front', count = 10, onlyIds = null } = {}) {
-  let pool = deck.cards.filter((c) => c.front && c.back);
+  let pool = deck.cards.filter((c) => c.front && (c.back || isCloze(c)));
   if (onlyIds) pool = pool.filter((c) => onlyIds.includes(c.id));
   const picked = shuffle(pool).slice(0, count > 0 ? count : pool.length);
-  const answerOf = (c) => (direction === 'back' ? c.front : c.back);
-  const allAnswers = [...new Set(deck.cards.map(answerOf).filter(Boolean))];
+  const allAnswers = [...new Set(deck.cards.map((c) => cardFace(c, direction).answer).filter((a) => a && a.length < 80))];
   return picked.map((c, i) => {
-    const answer = answerOf(c);
+    const face = cardFace(c, direction);
     let kind = mode === 'mix' ? (i % 2 ? 'type' : 'choice') : mode;
-    const others = shuffle(allAnswers.filter((a) => a !== answer)).slice(0, 3);
-    if (kind === 'choice' && others.length < 1) kind = 'type';
+    const others = shuffle(allAnswers.filter((a) => a !== face.answer)).slice(0, 3);
+    // Multiple choice needs one short answer and some decoys; otherwise it's typed.
+    if (kind === 'choice' && (others.length < 1 || face.answer.length > 80)) kind = 'type';
     return {
       cardId: c.id,
-      ask: direction === 'back' ? c.back : c.front,
-      answer,
+      ask: face.ask,
+      img: c.img || '',
+      answer: face.answer,
+      answers: face.answers,
+      note: c.type === 'multi' && face.answers.length > 1 ? `Any one of ${face.answers.length}` : '',
       kind,
-      options: kind === 'choice' ? shuffle([answer, ...others]) : [],
+      options: kind === 'choice' ? shuffle([face.answer, ...others]) : [],
     };
   });
 }
@@ -146,6 +208,9 @@ export function checkTyped(given, answer) {
   const allowed = a.length > 12 ? 2 : a.length > 4 ? 1 : 0;
   return distance(g, a) <= allowed;
 }
+
+// Right if it matches any of the card's answers (multi-answer cards and fill-in-the-blanks).
+export const checkAny = (given, answers) => (answers ?? []).some((a) => checkTyped(given, a));
 
 // Saves the score, and sends missed cards back to the start of the review boxes.
 export const saveQuizResult = (deckId, { score, total, missed }) => change((st) => {

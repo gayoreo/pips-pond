@@ -4,9 +4,12 @@ import {
   getStudy, addCourse, updateCourse, deleteCourse, addTask, updateTask, deleteTask, toggleDone,
   addSeries, stopSeries, ensureSeries, liveTasks, studyStatus, studyPipLine, dueLabel, studyNotifyPrefs,
   dayItems, freeGaps, timeRange, saveBlock, deleteBlock, TASK_TYPES, BLOCK_KINDS, COURSE_COLORS,
-  studyHours, seriesTasks, restoreTask, updateSeries,
+  studyHours, seriesTasks, restoreTask, updateSeries, ensureCourseSemesters, needsScore, skipScore, coursesForSemester,
 } from '../data/study.js';
+import { courseGrade, gradingOf, gpaOf, fmtPct, fmtGpa, DEFAULT_GPA_SCALE } from '../core/grades.js';
+import { openCourse, scoreTask } from './course.js';
 import { getDecks, dueCards, totalDue, reviewStreak, addDeck } from '../data/decks.js';
+import { getArchive } from '../data/db.js';
 import { getProfile, saveProfile, readAll } from '../data/db.js';
 import { pushStatus } from '../data/push.js';
 import { todayKey, addDays, dayOfWeek, startOfWeek, formatShort, formatHM, fromKey } from '../core/dates.js';
@@ -15,7 +18,8 @@ import { toast } from '../ui/toast.js';
 import { play } from '../ui/sound.js';
 import { openSheet } from '../ui/sheet.js';
 import { beginCourseSetup } from './courseSetup.js';
-import { openDeck } from './decks.js';
+import { openDeck, importByCode } from './decks.js';
+import { pendingShare, clearPendingShare } from '../data/share.js';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MODE_KEY = 'study:mode';
@@ -180,10 +184,14 @@ function decksHTML(s) {
       <p class="hand">No decks yet.</p>
       <p class="card__hint">Make a deck, then paste in your terms. Copying from Quizlet, Sheets or a doc works.</p>
       <button type="button" class="btn-sketch btn-sketch--go" data-new-deck>+ new deck</button>
+      <button type="button" class="btn-plain" data-deck-code>copy a shared deck</button>
     </section>`;
   }
   return `
-    ${streak > 1 ? `<p class="card__hint">Review streak: <b>${streak} days</b></p>` : ''}
+    <div class="row">
+      ${streak > 1 ? `<p class="card__hint">Review streak: <b>${streak} days</b></p>` : '<span></span>'}
+      <button type="button" class="btn-plain" data-deck-code>copy a shared deck</button>
+    </div>
     <ul class="deck-list">${decks.map((d) => {
       const due = dueCards(d).length;
       const c = courses[d.courseId];
@@ -196,8 +204,141 @@ function decksHTML(s) {
     }).join('')}</ul>`;
 }
 
+// ---------- grades ----------
+export const gpaPrefs = (profile) => ({
+  scale: { ...DEFAULT_GPA_SCALE, ...(profile?.gpa?.scale ?? {}) },
+  priorGpa: profile?.gpa?.priorGpa ?? '', priorCredits: profile?.gpa?.priorCredits ?? '',
+});
+
+// This semester's GPA, and overall GPA with earlier semesters and what you typed in from before the app.
+async function gpaSummary(s, profile) {
+  const prefs = gpaPrefs(profile);
+  const rows = (courses) => courses.map((course) => ({ course, pct: courseGrade(course).pct }));
+  const now = gpaOf(rows(s.courses), prefs.scale);
+  const settings = readAll().settings;
+  const archive = await getArchive();
+  const earlier = archive.filter((a) => a.settings?.key && settings && a.settings.end < settings.start)
+    .flatMap((a) => rows(coursesForSemester(a.settings.key)));
+  const past = gpaOf(earlier, prefs.scale);
+  const pg = Number(prefs.priorGpa);
+  const pc = Number(prefs.priorCredits);
+  const priorPts = pg >= 0 && pc > 0 ? pg * pc : 0;
+  const priorCr = pg >= 0 && pc > 0 ? pc : 0;
+  const allCr = now.credits + past.credits + priorCr;
+  return {
+    term: now,
+    overall: { gpa: allCr ? (now.points + past.points + priorPts) / allCr : null, credits: allCr },
+  };
+}
+
+async function gradesHTML(s, profile) {
+  const waiting = needsScore(s);
+  const courses = Object.fromEntries(s.courses.map((c) => [c.id, c]));
+  const { term, overall } = await gpaSummary(s, profile);
+  return `
+    <section class="card gpa-card">
+      <div><p class="gpa-card__num">${fmtGpa(term.gpa)}</p><p class="muted">this semester${term.credits ? ` · ${term.credits} credits` : ''}</p></div>
+      <div><p class="gpa-card__num">${fmtGpa(overall.gpa)}</p><p class="muted">overall${overall.credits ? ` · ${overall.credits} credits` : ''}</p></div>
+      <button type="button" class="btn-plain" data-gpa-settings>GPA settings</button>
+    </section>
+    ${waiting.length ? `
+    <section class="card">
+      <h2 class="card__title">Needs a score <span class="muted">${waiting.length}</span></h2>
+      <ul class="needs-list">${waiting.slice(0, 8).map((t) => `
+        <li><span>${esc(t.title)} <span class="muted">${esc(courses[t.courseId]?.name ?? '')}</span></span>
+          <button type="button" class="btn-plain" data-score-task="${esc(t.id)}">add score</button>
+          <button type="button" class="btn-plain btn-plain--muted" data-skip-task="${esc(t.id)}">skip</button></li>`).join('')}</ul>
+    </section>` : ''}
+    ${s.courses.length ? `<ul class="grade-courses">${s.courses.map((c) => {
+      const r = courseGrade(c);
+      const g = gradingOf(c);
+      return `
+      <li><button type="button" class="grade-course" data-course-page="${esc(c.id)}" style="--course:${c.color}">
+        <span class="grade-course__name">${esc(c.name)}<span class="muted">${[c.code, g.passFail ? 'pass/fail' : `${g.credits ?? 0} cr`].filter(Boolean).map(esc).join(' · ')}</span></span>
+        <span class="grade-course__pct">${g.categories.length ? fmtPct(r.pct) : 'set up'}</span>
+        <span class="grade-course__letter">${esc(r.letter || '')}</span>
+      </button></li>`;
+    }).join('')}</ul>` : `
+    <section class="card study-empty">
+      <p class="hand">No courses yet.</p>
+      <p class="card__hint">Set up a course, then tap it here to track its grade.</p>
+      <button type="button" class="btn-sketch btn-sketch--go" data-setup>set up a course</button>
+    </section>`}
+    <p class="card__hint">Tap a course to add scores, set how it’s graded, and see what you need on the final.</p>`;
+}
+
+async function openGpaSheet() {
+  const profile = await getProfile();
+  const p = gpaPrefs(profile);
+  const html = `
+    <p class="card__hint">These are the same for every class at your school. Each class sets its own percent cutoffs in its grade setup.</p>
+    <div class="gpa-scale">${Object.entries(p.scale).map(([letter, pts]) => `
+      <label class="field">${esc(letter)}<input inputmode="decimal" data-gpa-letter="${esc(letter)}" value="${esc(String(pts))}"></label>`).join('')}
+    </div>
+    <p class="field">Before this app</p>
+    <div class="grid-2">
+      <label class="field"><span class="field__label">GPA so far <span class="muted">(optional)</span></span><input inputmode="decimal" name="priorGpa" value="${esc(String(p.priorGpa))}" placeholder="3.45"></label>
+      <label class="field"><span class="field__label">Credits so far <span class="muted">(optional)</span></span><input inputmode="decimal" name="priorCredits" value="${esc(String(p.priorCredits))}" placeholder="45"></label>
+    </div>
+    <p class="card__hint">Only count semesters you didn’t track here. Semesters you finish in the app add themselves.</p>
+    <p class="card__hint">Changes save right away.</p>`;
+  openSheet('GPA settings', html, (sheet) => {
+    sheet.addEventListener('change', async () => {
+      const scale = {};
+      sheet.querySelectorAll('[data-gpa-letter]').forEach((el) => {
+        const v = Number(el.value);
+        scale[el.dataset.gpaLetter] = Number.isNaN(v) ? DEFAULT_GPA_SCALE[el.dataset.gpaLetter] ?? 0 : v;
+      });
+      const val = (n) => { const v = sheet.querySelector(`[name="${n}"]`).value.trim(); return v === '' || Number.isNaN(Number(v)) ? '' : Number(v); };
+      await saveProfile({ gpa: { scale, priorGpa: val('priorGpa'), priorCredits: val('priorCredits') } });
+    });
+  });
+}
+
+// ---------- search ----------
+function searchResults(query) {
+  const q = query.trim().toLowerCase();
+  if (q.length < 2) return '<p class="card__hint">Type at least 2 letters.</p>';
+  const s = getStudy();
+  const has = (...xs) => xs.some((x) => String(x ?? '').toLowerCase().includes(q));
+  const courses = s.courses.filter((c) => has(c.name, c.code));
+  const tasks = liveTasks(s).filter((t) => has(t.title, t.notes, ...(t.checklist ?? []).map((i) => i.text))).sort(byDue).slice(0, 20);
+  const decks = getDecks();
+  const deckHits = decks.filter((d) => has(d.name));
+  const cardHits = decks.flatMap((d) => d.cards.filter((c) => has(c.front, c.back)).map((c) => ({ d, c }))).slice(0, 20);
+  const today = todayKey();
+  const group = (title, rows) => (rows.length ? `<p class="fw-sub">${title}</p><ul class="search-list">${rows.join('')}</ul>` : '');
+  const out = [
+    group('Courses', courses.map((c) => `<li><button type="button" data-hit-course="${esc(c.id)}">${esc(c.name)}${c.code ? ` <span class="muted">${esc(c.code)}</span>` : ''}</button></li>`)),
+    group('Planner', tasks.map((t) => `<li><button type="button" data-hit-task="${esc(t.id)}">${esc(t.title)} <span class="muted">${esc(t.done ? 'done' : dueLabel(t, today))}</span></button></li>`)),
+    group('Decks', deckHits.map((d) => `<li><button type="button" data-hit-deck="${esc(d.id)}">${esc(d.name)} <span class="muted">${d.cards.length} cards</span></button></li>`)),
+    group('Flashcards', cardHits.map(({ d, c }) => `<li><button type="button" data-hit-deck="${esc(d.id)}">${esc(c.front)} <span class="muted">${esc(c.back).slice(0, 60)} · ${esc(d.name)}</span></button></li>`)),
+  ].join('');
+  return out || '<p class="card__hint">Nothing found.</p>';
+}
+
+function openSearchSheet() {
+  const html = `
+    <label class="field">Search<input type="search" name="q" autocomplete="off" placeholder="Courses, homework, flashcards"></label>
+    <div data-results><p class="card__hint">Type at least 2 letters.</p></div>`;
+  openSheet('Search', html, (sheet, close) => {
+    const input = sheet.querySelector('[name="q"]');
+    input.focus();
+    input.addEventListener('input', () => { sheet.querySelector('[data-results]').innerHTML = searchResults(input.value); });
+    sheet.addEventListener('click', (e) => {
+      const c = e.target.closest('[data-hit-course]');
+      if (c) { close(); openCourse(c.dataset.hitCourse); return; }
+      const t = e.target.closest('[data-hit-task]');
+      if (t) { close(); openTaskSheet(getStudy().tasks.find((x) => x.id === t.dataset.hitTask)); return; }
+      const d = e.target.closest('[data-hit-deck]');
+      if (d) { close(); openDeck(d.dataset.hitDeck); }
+    });
+  });
+}
+
 // ---------- the page ----------
 export async function renderStudy(root) {
+  ensureCourseSemesters();
   ensureSeries();
   const s = getStudy();
   const today = todayKey();
@@ -206,31 +347,43 @@ export async function renderStudy(root) {
   const hours = studyHours(profile);
 
   let line = null;
-  if (mode === 'decks') {
+  if (mode === 'grades') {
+    const n = needsScore(s).length;
+    line = n ? `${n} finished ${n === 1 ? 'thing needs' : 'things need'} a score.` : null;
+  } else if (mode === 'decks') {
     const due = totalDue();
     line = due ? `${due} ${due === 1 ? 'card is' : 'cards are'} ready to review.` : getDecks().length ? 'No cards due. Nice work.' : null;
   } else {
     line = studyPipLine(studyStatus(s, today), today) ?? (liveTasks(s).length ? 'All caught up for now. Nice.' : null);
   }
-  const title = { planner: 'Planner', week: 'Week', decks: 'Decks' }[mode];
-  const addAttr = mode === 'decks' ? 'data-new-deck' : mode === 'week' ? 'data-add-block' : 'data-add';
+  const title = { planner: 'Planner', week: 'Week', decks: 'Decks', grades: 'Grades' }[mode] ?? 'Planner';
+  const addAttr = mode === 'decks' ? 'data-new-deck' : mode === 'week' ? 'data-add-block' : mode === 'grades' ? 'data-setup' : 'data-add';
+  const body = mode === 'decks' ? decksHTML(s) : mode === 'week' ? weekHTML(s, today, hours)
+    : mode === 'grades' ? await gradesHTML(s, profile) : plannerHTML(s, today, profile);
 
   root.innerHTML = `
   <div class="study stack">
     <header class="study__head">
       <div><p class="eyebrow">Study</p><h1 class="page-title">${title}</h1></div>
-      <button type="button" class="btn-sketch btn-sketch--go" ${addAttr}>+ add</button>
+      <div class="row">
+        <button type="button" class="btn-plain study__search" data-search aria-label="Search">🔍</button>
+        <button type="button" class="btn-sketch btn-sketch--go" ${addAttr}>+ ${mode === 'grades' ? 'course' : 'add'}</button>
+      </div>
     </header>
-    <div class="seg seg--3 study-mode" role="group" aria-label="Study view">
-      ${['planner', 'week', 'decks'].map((m) => `<button type="button" data-mode="${m}" aria-pressed="${mode === m}">${m}</button>`).join('')}
+    <div class="seg seg--4 study-mode" role="group" aria-label="Study view">
+      ${['planner', 'week', 'decks', 'grades'].map((m) => `<button type="button" data-mode="${m}" aria-pressed="${mode === m}">${m}</button>`).join('')}
     </div>
     ${line ? `<p class="study__pip">“${esc(line)}”</p>` : ''}
     <div class="study__tools">
       <button type="button" class="btn-plain" data-courses>Courses</button>
       <button type="button" class="btn-plain" data-settings>Settings</button>
     </div>
-    ${mode === 'decks' ? decksHTML(s) : mode === 'week' ? weekHTML(s, today, hours) : plannerHTML(s, today, profile)}
+    ${body}
   </div>`;
+
+  // Opened from a share link (?deck=CODE): offer the copy once.
+  const shared = pendingShare();
+  if (shared) { clearPendingShare(); openCodeSheet(shared); }
 
   root.querySelector('.study').addEventListener('click', (e) => {
     const t = e.target;
@@ -244,8 +397,21 @@ export async function renderStudy(root) {
     if (t.closest('[data-setup]')) return beginCourseSetup(null);
     if (t.closest('[data-courses]')) return openCoursesSheet();
     if (t.closest('[data-settings]')) return openStudySettings();
+    if (t.closest('[data-search]')) return openSearchSheet();
+    if (t.closest('[data-gpa-settings]')) return openGpaSheet();
+    const coursePage = t.closest('[data-course-page]');
+    if (coursePage) return openCourse(coursePage.dataset.coursePage);
+    const scoreBtn = t.closest('[data-score-task]');
+    if (scoreBtn) {
+      const task = getStudy().tasks.find((x) => x.id === scoreBtn.dataset.scoreTask);
+      const course = getStudy().courses.find((c) => c.id === task?.courseId);
+      return course ? scoreTask(course, task) : undefined;
+    }
+    const skipBtn = t.closest('[data-skip-task]');
+    if (skipBtn) { skipScore(skipBtn.dataset.skipTask); return toast('Skipped. It won’t ask again.'); }
     if (t.closest('[data-add-block]')) return openBlockSheet(null);
     if (t.closest('[data-new-deck]')) return openNewDeckSheet();
+    if (t.closest('[data-deck-code]')) return openCodeSheet();
     const deck = t.closest('[data-deck]');
     if (deck) return openDeck(deck.dataset.deck);
     const block = t.closest('[data-block]');
@@ -624,6 +790,7 @@ function coursesHTML() {
       <li class="course-row">
         <button type="button" class="course-swatch" data-recolor="${esc(c.id)}" style="background:${c.color}" aria-label="Change color for ${esc(c.name)}"></button>
         <span class="course-row__name"><b>${esc(c.name)}</b>${c.code ? ` <span class="muted">${esc(c.code)}</span>` : ''}<br><span class="muted">${summary || 'No class times yet'}</span></span>
+        <button type="button" class="btn-plain" data-grades="${esc(c.id)}">grades</button>
         <button type="button" class="btn-plain" data-edit="${esc(c.id)}">edit</button>
         <button type="button" class="btn-plain btn-plain--danger" data-remove="${esc(c.id)}" aria-label="Remove ${esc(c.name)}">✕</button>
       </li>`;
@@ -640,6 +807,8 @@ function openCoursesSheet() {
       if (e.target.closest('[data-setup-new]')) { close(); beginCourseSetup(null); return; }
       const edit = e.target.closest('[data-edit]');
       if (edit) { close(); beginCourseSetup(edit.dataset.edit); return; }
+      const grades = e.target.closest('[data-grades]');
+      if (grades) { close(); openCourse(grades.dataset.grades); return; }
       const recolor = e.target.closest('[data-recolor]');
       if (recolor) {
         const c = getStudy().courses.find((x) => x.id === recolor.dataset.recolor);
@@ -651,7 +820,7 @@ function openCoursesSheet() {
       const remove = e.target.closest('[data-remove]');
       if (remove) {
         const c = getStudy().courses.find((x) => x.id === remove.dataset.remove);
-        if (!c || !confirm(`Remove ${c.name}? Its class times go away. Its homework stays in the planner, just without a course.`)) return;
+        if (!c || !confirm(`Remove ${c.name}? Its class times and grades go away. Its homework stays in the planner, just without a course.`)) return;
         deleteCourse(c.id);
         redraw();
       }
@@ -682,6 +851,24 @@ function openNewDeckSheet() {
     };
     name.addEventListener('keydown', (e) => { if (e.key === 'Enter') make(); });
     sheet.querySelector('[data-save]').addEventListener('click', make);
+  });
+}
+
+// A friend's deck code, typed in or opened from a share link.
+function openCodeSheet(prefill = '') {
+  const html = `
+    <p class="card__hint">Paste the code a friend gave you, or open their link. You get your own copy to edit and review.</p>
+    <label class="field">Deck code<input name="code" maxlength="8" autocomplete="off" autocapitalize="characters" value="${esc(prefill)}" placeholder="AB12CD"></label>
+    <button type="button" class="btn-sketch btn-sketch--go btn-sketch--big" data-get>Copy the deck</button>`;
+  openSheet('Copy a shared deck', html, (sheet, close) => {
+    const input = sheet.querySelector('[name="code"]');
+    input.focus();
+    sheet.querySelector('[data-get]').addEventListener('click', async () => {
+      const code = input.value.trim();
+      if (!code) { toast('Type the code first.'); return; }
+      close();
+      await importByCode(code);
+    });
   });
 }
 

@@ -91,17 +91,22 @@ export const updateCourse = (id, patch) => change((s) => {
   if (c) Object.assign(c, patch);
 });
 
-// Saves a whole course from the setup screens: name, code, color, class and lab times,
-// plus any new exams, assignments and readings. Returns the course.
-// meetings: [{ kind: 'class' | 'lab', days: [0-6], start: 'HH:MM', end: 'HH:MM', place }]
-export const saveCourse = ({ id, name, code = '', color, meetings = [] }, newTasks = []) => { const semKey = semesterKey(); return change((s) => {
+// Saves a whole course from the setup screens: name, code, color, who teaches it, class, lab
+// and office hour times, plus any new exams, assignments and readings. Returns the course.
+// meetings: [{ kind: 'class' | 'lab' | 'office' | 'ta', days: [0-6], start: 'HH:MM', end: 'HH:MM', place }]
+export const MEETING_KINDS = ['class', 'lab', 'office', 'ta'];
+export const saveCourse = ({ id, name, code = '', color, meetings = [], people = {} }, newTasks = []) => { const semKey = semesterKey(); return change((s) => {
   let course = id ? s.courses.find((c) => c.id === id) : null;
   const clean = meetings
     .filter((m) => m.days?.length && m.start)
-    .map((m) => ({ id: m.id || newId(), kind: m.kind === 'lab' ? 'lab' : 'class', days: [...m.days].sort(), start: m.start, end: m.end || '', place: (m.place || '').trim() }));
-  if (course) Object.assign(course, { name: name.trim(), code: code.trim(), color: color || course.color, meetings: clean });
+    .map((m) => ({ id: m.id || newId(), kind: MEETING_KINDS.includes(m.kind) ? m.kind : 'class', days: [...m.days].sort(), start: m.start, end: m.end || '', place: (m.place || '').trim() }));
+  const who = {
+    prof: (people.prof ?? '').trim(), profEmail: (people.profEmail ?? '').trim(),
+    ta: (people.ta ?? '').trim(), taEmail: (people.taEmail ?? '').trim(),
+  };
+  if (course) Object.assign(course, { name: name.trim(), code: code.trim(), color: color || course.color, meetings: clean, ...who });
   else {
-    course = { id: newId(), semKey, name: name.trim(), code: code.trim(), color: color || COURSE_COLORS[s.courses.length % COURSE_COLORS.length], meetings: clean };
+    course = { id: newId(), semKey, name: name.trim(), code: code.trim(), color: color || COURSE_COLORS[s.courses.length % COURSE_COLORS.length], meetings: clean, ...who };
     s.courses.push(course);
   }
   for (const t of newTasks) {
@@ -364,6 +369,8 @@ export function dayItems(s, day) {
   const items = meetingsOn(s, day).map(({ course, meeting }) => ({
     kind: meeting.kind, title: course.name, start: meeting.start, end: meeting.end, place: meeting.place,
     color: course.color, course, meeting,
+    // Office hours are there if you want them, so they don't count as busy time.
+    soft: meeting.kind === 'office' || meeting.kind === 'ta',
   }));
   for (const b of s.blocks) if (blockOn(b, day)) items.push({ kind: b.kind, title: b.title || BLOCK_KINDS[b.kind]?.label, start: b.start, end: b.end, place: b.place, block: b });
   const courses = Object.fromEntries(s.courses.map((c) => [c.id, c]));
@@ -379,7 +386,7 @@ const toHM = (n) => `${String(Math.floor(n / 60)).padStart(2, '0')}:${String(n %
 
 // Open stretches of at least `min` minutes between `from` and `to` on a day (things without an end count as 1 hour).
 export function freeGaps(items, { from = '08:00', to = '22:00', min = 60 } = {}) {
-  const busy = items.map((i) => [toMin(i.start), i.end ? toMin(i.end) : toMin(i.start) + 60]).sort((a, b) => a[0] - b[0]);
+  const busy = items.filter((i) => !i.soft).map((i) => [toMin(i.start), i.end ? toMin(i.end) : toMin(i.start) + 60]).sort((a, b) => a[0] - b[0]);
   const gaps = [];
   let t = toMin(from);
   const stop = toMin(to);
@@ -546,7 +553,7 @@ export function scheduleForFriends(data) {
   if (any('class')) {
     for (const c of s.courses) {
       for (const m of c.meetings ?? []) {
-        if (!m.days?.length || !m.start) continue;
+        if (!m.days?.length || !m.start || (m.kind !== 'class' && m.kind !== 'lab')) continue;
         out.push({ cat: 'class', kind: m.kind === 'lab' ? 'lab' : 'class', name: c.name, code: c.code || '', color: c.color, days: m.days, start: m.start, end: m.end || '', ...place(m.place) });
       }
     }

@@ -8,12 +8,15 @@ import { toast } from '../ui/toast.js';
 import { play } from '../ui/sound.js';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const STEPS = ['basics', 'classes', 'labs', 'exams', 'work', 'review'];
+const STEPS = ['basics', 'classes', 'labs', 'help', 'exams', 'work', 'review'];
 const TITLES = {
   basics: 'Which course?', classes: 'When does class meet?', labs: 'Any lab times?',
-  exams: 'Exams', work: 'Assignments and readings', review: 'Look good?',
+  help: 'Office hours', exams: 'Exams', work: 'Assignments and readings', review: 'Look good?',
 };
-const w = { step: 0, id: '', name: '', code: '', color: '', meetings: [], exams: [], work: [], paste: '', existing: 0 };
+const w = {
+  step: 0, id: '', name: '', code: '', color: '', meetings: [], exams: [], work: [], paste: '', existing: 0,
+  prof: '', profEmail: '', ta: '', taEmail: '',
+};
 
 // When editing a course: what's already in the planner for it, so it can be edited from here.
 // A weekly repeat shows once (its next copy).
@@ -53,6 +56,10 @@ export function beginCourseSetup(courseId) {
     code: course?.code ?? '',
     color: course?.color ?? COURSE_COLORS[getStudy().courses.length % COURSE_COLORS.length],
     meetings: (course?.meetings ?? []).map((m) => ({ ...m, days: [...m.days] })),
+    prof: course?.prof ?? '',
+    profEmail: course?.profEmail ?? '',
+    ta: course?.ta ?? '',
+    taEmail: course?.taEmail ?? '',
     exams: course ? [] : [{ title: 'Midterm 1', due: '', time: '', end: '' }, { title: 'Final exam', due: '', time: '', end: '' }],
     work: [],
     paste: '',
@@ -73,7 +80,7 @@ function meetingRows(kind) {
         <label class="field">Starts<input type="time" data-f="start" value="${esc(m.start)}"></label>
         <label class="field">Ends<input type="time" data-f="end" value="${esc(m.end)}"></label>
       </div>
-      <label class="field"><span class="field__label">Where <span class="muted">(optional)</span></span><input data-f="place" maxlength="60" value="${esc(m.place)}" placeholder="${kind === 'lab' ? 'Science 210' : 'Room 104'}"></label>
+      <label class="field"><span class="field__label">${kind === 'office' || kind === 'ta' ? 'Office' : 'Where'} <span class="muted">(optional)</span></span><input data-f="place" maxlength="60" value="${esc(m.place)}" placeholder="${kind === 'lab' ? 'Science 210' : kind === 'office' ? 'Votey 305' : kind === 'ta' ? 'Lab 112' : 'Room 104'}"></label>
       <button type="button" class="btn-plain btn-plain--danger" data-remove-meeting="${i}">remove</button>
     </section>`).join('');
 }
@@ -97,6 +104,28 @@ function stepHTML() {
       : 'Labs show separately on your week. Skip this if the course has no lab.'}</p>
     ${meetingRows(kind)}
     <button type="button" class="btn-sketch" data-add-meeting="${kind}">+ add ${kind === 'class' ? 'a class time' : 'a lab time'}</button>`;
+  }
+  if (name === 'help') {
+    return `
+    <p class="card__hint">Office hours show on your week in their own color. They never count as busy time, so free time and study slots ignore them.</p>
+    <section class="card">
+      <h2 class="card__title">Professor</h2>
+      <div class="grid-2">
+        <label class="field"><span class="field__label">Name <span class="muted">(optional)</span></span><input data-w="prof" maxlength="60" autocomplete="off" value="${esc(w.prof)}" placeholder="Dr. Nguyen"></label>
+        <label class="field"><span class="field__label">Email <span class="muted">(optional)</span></span><input data-w="profEmail" type="email" maxlength="80" autocomplete="off" spellcheck="false" value="${esc(w.profEmail)}" placeholder="a.nguyen@uvm.edu"></label>
+      </div>
+    </section>
+    ${meetingRows('office')}
+    <button type="button" class="btn-sketch" data-add-meeting="office">+ add office hours</button>
+    <section class="card">
+      <h2 class="card__title">TA</h2>
+      <div class="grid-2">
+        <label class="field"><span class="field__label">Name <span class="muted">(optional)</span></span><input data-w="ta" maxlength="60" autocomplete="off" value="${esc(w.ta)}" placeholder="Sam"></label>
+        <label class="field"><span class="field__label">Email <span class="muted">(optional)</span></span><input data-w="taEmail" type="email" maxlength="80" autocomplete="off" spellcheck="false" value="${esc(w.taEmail)}" placeholder="sam@uvm.edu"></label>
+      </div>
+    </section>
+    ${meetingRows('ta')}
+    <button type="button" class="btn-sketch" data-add-meeting="ta">+ add TA hours</button>`;
   }
   if (name === 'exams') {
     return `
@@ -139,6 +168,8 @@ function stepHTML() {
   }
   const classes = w.meetings.filter((m) => m.kind === 'class');
   const labs = w.meetings.filter((m) => m.kind === 'lab');
+  const office = w.meetings.filter((m) => m.kind === 'office');
+  const taHours = w.meetings.filter((m) => m.kind === 'ta');
   const exams = w.exams.filter((x) => x.title.trim() && x.due);
   const line = (m) => `${m.days.map((d) => DAYS[d]).join(', ')} ${esc(m.start)}${m.end ? ` to ${esc(m.end)}` : ''}${m.place ? `, ${esc(m.place)}` : ''}`;
   return `
@@ -146,6 +177,8 @@ function stepHTML() {
       <h2 class="card__title">${esc(w.name)}${w.code ? ` <span class="muted">${esc(w.code)}</span>` : ''}</h2>
       <p><b>Class:</b> ${classes.length ? classes.map(line).join('; ') : 'none'}</p>
       <p><b>Lab:</b> ${labs.length ? labs.map(line).join('; ') : 'none'}</p>
+      ${w.prof || office.length ? `<p><b>Professor:</b> ${esc(w.prof || 'not named')}${office.length ? ` · office hours ${office.map(line).join('; ')}` : ''}</p>` : ''}
+      ${w.ta || taHours.length ? `<p><b>TA:</b> ${esc(w.ta || 'not named')}${taHours.length ? ` · hours ${taHours.map(line).join('; ')}` : ''}</p>` : ''}
       <p><b>Exams to add:</b> ${exams.length ? exams.map((x) => esc(x.title)).join(', ') : 'none'}</p>
       <p><b>Assignments and readings to add:</b> ${w.work.filter((x) => x.title.trim() && x.due).length}</p>
     </section>`;
@@ -173,11 +206,13 @@ function readStep(root) {
 function problem() {
   const name = STEPS[w.step];
   if (name === 'basics' && !w.name.trim()) return 'Type the course name.';
-  if (name === 'classes' || name === 'labs') {
-    const kind = name === 'classes' ? 'class' : 'lab';
-    const bad = w.meetings.filter((m) => m.kind === kind).find((m) => (m.days.length || m.start || m.end || m.place) && !(m.days.length && m.start));
-    if (bad) return 'Each row needs at least one day and a start time (or remove the row).';
-    if (w.meetings.some((m) => m.kind === kind && m.end && m.start && m.end <= m.start)) return 'An end time is before its start time.';
+  if (name === 'classes' || name === 'labs' || name === 'help') {
+    const kinds = name === 'classes' ? ['class'] : name === 'labs' ? ['lab'] : ['office', 'ta'];
+    const mine = w.meetings.filter((m) => kinds.includes(m.kind));
+    if (mine.find((m) => (m.days.length || m.start || m.end || m.place) && !(m.days.length && m.start))) {
+      return 'Each row needs at least one day and a start time (or remove the row).';
+    }
+    if (mine.some((m) => m.end && m.start && m.end <= m.start)) return 'An end time is before its start time.';
   }
   if (name === 'exams') {
     const bad = w.exams.find((x) => x.title.trim() && !x.due);
@@ -266,10 +301,13 @@ export function renderCourseSetup(root) {
         ...w.exams.filter((x) => x.title.trim() && x.due).map((x) => ({ title: x.title, type: 'exam', due: x.due, time: x.time, end: x.time ? x.end : '' })),
         ...w.work.filter((x) => x.title.trim() && x.due).map((x) => ({ title: x.title, type: x.type, due: x.due, time: '' })),
       ];
-      saveCourse({ id: w.id, name: w.name, code: w.code, color: w.color, meetings: w.meetings }, tasks);
+      saveCourse({
+        id: w.id, name: w.name, code: w.code, color: w.color, meetings: w.meetings,
+        people: { prof: w.prof, profEmail: w.profEmail, ta: w.ta, taEmail: w.taEmail },
+      }, tasks);
       play('ribbit');
       toast(`${w.name.trim()} is set up${tasks.length ? ` with ${tasks.length} ${tasks.length === 1 ? 'thing' : 'things'} in your planner` : ''}.`, 3500);
-      Object.assign(w, { name: '', color: '', meetings: [], exams: [], work: [] });
+      Object.assign(w, { name: '', color: '', meetings: [], exams: [], work: [], prof: '', profEmail: '', ta: '', taEmail: '' });
       location.hash = '#/study';
       return undefined;
     }

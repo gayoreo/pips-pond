@@ -19,6 +19,7 @@ import { openDeck } from './decks.js';
 
 const COURSE_KEY = 'course:id';
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MEET_LABEL = { class: 'Class', lab: 'Lab', office: 'Office hours', ta: 'TA hours' };
 const state = { target: '', item: '' }; // "what do I need" picks, remembered while the page is open
 
 export function openCourse(id) {
@@ -172,7 +173,13 @@ export async function renderCourse(root) {
 
     <section class="card">
       <h2 class="card__title">This class</h2>
-      ${meets.length ? `<ul class="plain-list">${meets.map((m) => `<li>${m.kind === 'lab' ? 'Lab' : 'Class'}: ${m.days.map((d) => DAYS[d]).join(', ')} ${esc(timeRange(m))}${m.place ? ` · ${esc(m.place)}` : ''}</li>`).join('')}</ul>` : '<p class="card__hint">No class times yet.</p>'}
+      ${meets.length ? `<ul class="plain-list">${meets.map((m) => `<li>${MEET_LABEL[m.kind] ?? 'Class'}: ${m.days.map((d) => DAYS[d]).join(', ')} ${esc(timeRange(m))}${m.place ? ` · ${esc(m.place)}` : ''}</li>`).join('')}</ul>` : '<p class="card__hint">No class times yet.</p>'}
+      ${course.prof || course.ta || course.profEmail || course.taEmail ? `
+        <p class="fw-sub">Who to ask</p>
+        <ul class="plain-list">
+          ${course.prof || course.profEmail ? `<li>${esc(course.prof || 'Professor')}${course.profEmail ? ` · <a href="mailto:${esc(course.profEmail)}">${esc(course.profEmail)}</a>` : ''}</li>` : ''}
+          ${course.ta || course.taEmail ? `<li>TA: ${esc(course.ta || 'unnamed')}${course.taEmail ? ` · <a href="mailto:${esc(course.taEmail)}">${esc(course.taEmail)}</a>` : ''}</li>` : ''}
+        </ul>` : ''}
       ${upcoming.length ? `<p class="fw-sub">Coming up</p><ul class="plain-list">${upcoming.map((t) => `<li><button type="button" class="btn-plain" data-task="${esc(t.id)}">${esc(t.title)}</button> <span class="muted">${esc(dueLabel(t, today))}</span></li>`).join('')}</ul>` : ''}
       ${decks.length ? `<p class="fw-sub">Decks</p><ul class="plain-list">${decks.map((d) => `<li><button type="button" class="btn-plain" data-deck="${esc(d.id)}">${esc(d.name)}</button> <span class="muted">${dueCards(d).length} due</span></li>`).join('')}</ul>` : ''}
     </section>

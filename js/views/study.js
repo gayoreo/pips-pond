@@ -28,7 +28,7 @@ const byDue = (a, b) => `${a.due}T${a.time || '99'}`.localeCompare(`${b.due}T${b
 const getMode = () => { try { return sessionStorage.getItem(MODE_KEY) || 'planner'; } catch { return 'planner'; } };
 const setMode = (m) => { try { sessionStorage.setItem(MODE_KEY, m); } catch { /* ignore */ } };
 const nowHM = () => { const d = new Date(); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
-const KIND_LABEL = { class: 'Class', lab: 'Lab', exam: 'Exam', ...Object.fromEntries(Object.entries(BLOCK_KINDS).map(([k, v]) => [k, v.label])) };
+const KIND_LABEL = { class: 'Class', lab: 'Lab', exam: 'Exam', office: 'Office hours', ta: 'TA hours', ...Object.fromEntries(Object.entries(BLOCK_KINDS).map(([k, v]) => [k, v.label])) };
 
 // ---------- planner list ----------
 function taskRow(t, courses, today) {
@@ -71,7 +71,7 @@ function todayScheduleHTML(s, today) {
   <section class="today-sched" aria-label="Today's schedule">
     <p class="today-sched__title">Today</p>
     <ul>${items.map((i) => `
-      <li class="${i.end && i.end < now ? 'is-past' : ''}" style="--course:${i.color ?? `var(--kind-${i.kind})`}">
+      <li class="${i.end && i.end < now ? 'is-past' : ''}" style="--course:${i.soft || !i.color ? `var(--kind-${i.kind})` : i.color}">
         <span class="today-sched__time">${esc(timeRange(i))}</span>
         <span>${i.kind === 'exam' ? '📝 ' : ''}${esc(i.title)}${i.kind === 'lab' ? ' lab' : ''}${i.place ? ` <span class="muted">· ${esc(i.place)}</span>` : ''}</span>
       </li>`).join('')}
@@ -138,7 +138,7 @@ function weekHTML(s, today, hours) {
     const gaps = day >= today ? freeGaps(items, { from: day === today && now > hours.from ? now : hours.from, to: hours.to }) : [];
     const rows = [
       ...items.map((i) => ({ at: i.start, html: `
-        <li class="wk-item wk-item--${i.kind}" style="--course:${i.color ?? `var(--kind-${i.kind})`}">
+        <li class="wk-item wk-item--${i.kind}" style="--course:${i.soft || !i.color ? `var(--kind-${i.kind})` : i.color}">
           <button type="button" ${i.task ? `data-open="${esc(i.task.id)}"` : i.block ? `data-block="${esc(i.block.id)}"` : `data-edit-course="${esc(i.course.id)}"`}>
             <span class="wk-item__time">${esc(timeRange(i))}</span>
             <span class="wk-item__title">${esc(i.title)}</span>

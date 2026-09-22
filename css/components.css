@@ -684,3 +684,66 @@ body.is-locked { overflow: hidden; }
   .auth__hero .pond { height: 200px; }
   .auth__hero .frog { width: 180px; height: 180px; margin-left: -90px; }
 }
+
+/* ==================== Polish pass ==================== */
+
+/* ---- Visiting friend's frog + dance ---- */
+.frog--visitor {
+  left: auto; right: 6px; top: 24px; width: 96px; height: 96px; margin-left: 0;
+  transform-origin: 50% 90%; animation: hop-in 0.6s ease-out, bob 2.6s ease-in-out 0.6s infinite;
+  z-index: 2;
+}
+.frog--visitor svg { width: 100%; height: 100%; }
+.pond.has-visitor .frog { left: 38%; }
+@keyframes hop-in {
+  0% { transform: translate(60px, -80px) scale(0.4); opacity: 0; }
+  60% { transform: translate(0, 14px) scale(1.05); opacity: 1; }
+  100% { transform: translate(0, 0) scale(1); }
+}
+.frog.is-dancing svg { animation: dance 0.7s ease-in-out infinite; transform-origin: 50% 90%; }
+@keyframes dance {
+  0%, 100% { transform: rotate(-7deg) translateY(0); }
+  25% { transform: rotate(7deg) translateY(-6px); }
+  50% { transform: rotate(-7deg) translateY(0); }
+  75% { transform: rotate(7deg) translateY(-6px); }
+}
+@media (min-width: 900px) {
+  .pond-page .frog--visitor { width: 130px; height: 130px; right: 20px; top: 40px; }
+}
+
+/* ---- Sync / offline chip ---- */
+.netchip {
+  position: fixed; left: 50%; top: calc(env(safe-area-inset-top) + 8px); transform: translate(-50%, -12px);
+  z-index: 60; padding: 5px 14px; border: 2px solid var(--ink); border-radius: 999px;
+  background: var(--card); color: var(--ink); font-family: var(--font-body); font-weight: 700; font-size: 13px;
+  display: flex; align-items: center; gap: 7px; box-shadow: 2px 3px 0 rgba(0,0,0,0.12);
+  opacity: 0; transition: opacity 0.2s ease, transform 0.2s ease; pointer-events: none;
+}
+.netchip.is-shown { opacity: 1; transform: translate(-50%, 0); }
+.netchip.is-offline { background: var(--yellow-note); }
+.netchip.is-error { background: var(--plum-note, #e8d7ef); }
+.netchip.is-synced { background: var(--green-fill); border-color: var(--green-dark); color: var(--on-green); }
+.netchip__spin {
+  width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent;
+  border-radius: 50%; animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---- Ping buttons: little pop when tapped ---- */
+.ping-btn.is-sent { animation: ping-pop 0.45s ease-out; }
+@keyframes ping-pop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.35) rotate(-8deg); }
+  100% { transform: scale(1) rotate(0); }
+}
+.friend__stamp { display: block; font-size: 12px; color: var(--ink-2); }
+
+/* ---- One-time "make an account" nudge on the pond ---- */
+.signin-nudge {
+  background: var(--blue-note, #d7e8f5); border: 2px solid var(--ink); border-radius: var(--wobble-2);
+  padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; transform: rotate(-0.4deg);
+}
+.signin-nudge__row { display: flex; gap: 10px; align-items: center; }
+@media (prefers-reduced-motion: reduce) {
+  .frog--visitor, .frog.is-dancing svg, .netchip__spin, .ping-btn.is-sent { animation: none; }
+}

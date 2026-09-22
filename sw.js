@@ -1,5 +1,5 @@
 // Bump VERSION whenever you add, rename or remove files.
-const VERSION = 'v3';
+const VERSION = 'v4';
 const CACHE = `pips-pond-${VERSION}`;
 const FONT_CACHE = 'pips-pond-fonts';
 const LIB_CACHE = 'pips-pond-libs';
@@ -13,7 +13,7 @@ const SHELL = [
   './js/data/auth.js', './js/data/social.js', './js/data/push.js',
   './js/pip/frog.js', './js/pip/mood.js', './js/pip/lines.js',
   './js/ui/dom.js', './js/ui/toast.js', './js/ui/info.js', './js/ui/sound.js', './js/ui/widgets.js', './js/ui/report.js',
-  './js/ui/lock.js',
+  './js/ui/lock.js', './js/ui/status.js',
   './js/views/pond.js', './js/views/log.js', './js/views/feed.js', './js/views/favorites.js',
   './js/views/settings.js', './js/views/tutorial.js', './js/views/semesters.js', './js/views/data.js',
   './js/views/login.js', './js/views/signup.js', './js/views/friends.js', './js/views/addFriend.js',

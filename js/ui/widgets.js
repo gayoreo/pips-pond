@@ -59,16 +59,22 @@ export function stampsHTML(ex, resets) {
 }
 
 // The framed pond with lily pads + the frog. `button` makes the frog tappable (to pet it).
-export function pondSceneHTML({ mood, name, outfit, tag = true, button = false, extraClass = '' }) {
+// `dancing` makes the frog do a little dance; `visitor` ({ mood, name }) hops a friend's frog in.
+export function pondSceneHTML({ mood, name, outfit, tag = true, button = false, extraClass = '', dancing = false, visitor = null }) {
   const frog = frogSVG(mood, name, { outfit });
+  const cls = `frog is-${mood}${dancing ? ' is-dancing' : ''}`;
   const frogEl = button
-    ? `<button type="button" class="frog frog-btn is-${mood}" data-pet aria-label="Pet ${esc(name)}">${frog}</button>`
-    : `<div class="frog is-${mood}">${frog}</div>`;
+    ? `<button type="button" class="${cls} frog-btn" data-pet aria-label="Pet ${esc(name)}">${frog}</button>`
+    : `<div class="${cls}">${frog}</div>`;
+  const visitorEl = visitor
+    ? `<div class="frog frog--visitor is-${visitor.mood ?? 'happy'}" aria-label="${esc(visitor.name || 'A friend')} visiting">${frogSVG(visitor.mood ?? 'happy', visitor.name || 'Pip')}</div>`
+    : '';
   return `
-  <div class="pond ${extraClass}">
+  <div class="pond ${extraClass}${visitor ? ' has-visitor' : ''}">
     <span class="pad pad--a"></span><span class="pad pad--b"></span>
     <span class="ripple ripple--a"></span><span class="ripple ripple--b"></span>
     ${tag ? `<span class="mood-tag">${MOOD_LABEL[mood] ?? mood}</span>` : ''}
     ${frogEl}
+    ${visitorEl}
   </div>`;
 }

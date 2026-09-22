@@ -6,7 +6,7 @@ import {
 } from '../data/social.js';
 import { frogSVG } from '../pip/frog.js';
 import { MOOD_LABEL } from '../pip/mood.js';
-import { formatShort } from '../core/dates.js';
+import { formatShort, ago } from '../core/dates.js';
 import { esc } from '../ui/dom.js';
 import { toast } from '../ui/toast.js';
 import { play } from '../ui/sound.js';
@@ -28,6 +28,7 @@ function friendCard(f) {
     <div class="friend__who">
       <b class="hand">${esc(whoName(f))}</b>
       <span class="muted">${esc(f.frog_name || 'Pip')} · ${MOOD_LABEL[mood] ?? mood}</span>
+      ${f.mood_at ? `<span class="friend__stamp">as of ${esc(ago(f.mood_at))}</span>` : ''}
     </div>
     <div class="friend__acts">
       ${Object.entries(PING_KINDS).map(([k, v]) =>
@@ -143,12 +144,15 @@ export async function renderFriends(root) {
     const ping = e.target.closest('[data-ping]');
     if (ping) {
       ping.disabled = true;
+      ping.classList.remove('is-sent');
+      void ping.offsetWidth; // restart the pop animation
+      ping.classList.add('is-sent');
       try {
         await sendPing(ping.dataset.id, ping.dataset.ping);
         play('pop');
         toast(`${PING_KINDS[ping.dataset.ping].label} sent!`);
-      } catch (er) { toast(er.message); }
-      finally { setTimeout(() => { ping.disabled = false; }, 400); }
+      } catch (er) { toast(er.message); ping.classList.remove('is-sent'); }
+      finally { setTimeout(() => { ping.disabled = false; }, 500); }
       return;
     }
     const accept = e.target.closest('[data-accept]');

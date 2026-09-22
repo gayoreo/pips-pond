@@ -9,6 +9,7 @@ import { claimDevice, syncNow, syncSoon, startAutoSync } from './data/sync.js';
 import { nextStop, mayUseApp, requireLogin } from './data/auth.js';
 import { captureInvite } from './views/addFriend.js';
 import { lockEnabled, showLock, watchLock } from './ui/lock.js';
+import { initStatus } from './ui/status.js';
 // Loaded for their side effects: they register after-sync / sign-out hooks.
 import './data/social.js';
 import './data/push.js';
@@ -57,6 +58,7 @@ if (shortcut && !target) goto('#/pond');
 
 await startRouter();
 ready = true;
+initStatus();
 
 if (shortcut) runShortcut(params);
 

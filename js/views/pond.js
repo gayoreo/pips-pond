@@ -13,6 +13,20 @@ import { openFeedSheet, quickLog, describe } from './feed.js';
 import { beginNewSemester } from './tutorial.js';
 import { render } from '../router.js';
 import { pingsNow, markPingsSeen, whoName, PINGS_EVENT, PING_KINDS } from '../data/social.js';
+import { cloudEnabled, userNow } from '../data/supabase.js';
+
+// One-time card nudging local-only users to make an account (for sync + friends + reminders).
+function signinNudgeHTML(profile) {
+  if (!cloudEnabled || userNow() || profile.signinNudgeSeen) return '';
+  return `
+  <section class="signin-nudge" aria-label="Make an account">
+    <p class="hand">Want to sync to your computer, add pond friends, and get reminders?</p>
+    <div class="signin-nudge__row">
+      <a class="btn-sketch btn-sketch--go" href="#/login">Make a free account</a>
+      <button type="button" class="btn-plain btn-plain--muted" data-nudge-dismiss>maybe later</button>
+    </div>
+  </section>`;
+}
 
 const PING_LINE = {
   snack: (who) => `${who} sent a snack! *nom nom* 🍪`,
@@ -146,6 +160,12 @@ export async function renderPond(root) {
       });
   const stats = b.phase === 'after' ? reportStats(settings, entries) : null;
 
+  // Friend pings can bring a visiting frog or a dance to the pond.
+  const pings = pingsNow();
+  const visit = [...pings].reverse().find((p) => p.kind === 'visit');
+  const visitor = visit ? { mood: visit.mood ?? 'happy', name: visit.frog_name || 'Pip' } : null;
+  const dancing = pings.some((p) => p.kind === 'dance');
+
   root.innerHTML = `
   <div class="pond-page">
     <header class="pond-page__head">
@@ -155,11 +175,12 @@ export async function renderPond(root) {
 
     <div class="pond-page__a">
       <section aria-label="${esc(name)}" class="pond-wrap">
-        ${pondSceneHTML({ mood, name, outfit: outfitFor(today), button: true, extraClass: movingIn ? 'is-moving-in' : '' })}
+        ${pondSceneHTML({ mood, name, outfit: outfitFor(today), button: true, extraClass: movingIn ? 'is-moving-in' : '', dancing, visitor })}
         ${movingIn ? `<div class="leaves" aria-hidden="true">${LEAVES}</div>` : ''}
         <p class="pip-says" aria-live="polite">“${esc(line)}”</p>
       </section>
       ${pingsHTML()}
+      ${signinNudgeHTML(profile)}
       ${recapHTML(settings, entries, b, profile)}
       ${finalsHTML(b)}
       ${phaseHTML(b, settings, name, stats, profile)}
@@ -216,6 +237,7 @@ export async function renderPond(root) {
     }
     if (e.target.closest('[data-recap-ok]')) return saveProfile({ recapSeen: b.weekStart });
     if (e.target.closest('[data-pings-ok]')) { play('pop'); return markPingsSeen(pingsNow().map((p) => p.id)); }
+    if (e.target.closest('[data-nudge-dismiss]')) return saveProfile({ signinNudgeSeen: true });
     if (e.target.closest('[data-new-semester]')) return beginNewSemester(nextSemesterDefaults(settings, entries));
   });
 

@@ -75,6 +75,22 @@ export function formatHM(hm) {
   return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }
 
+// A short "how long ago" for a timestamp: "just now", "5m ago", "2h ago", "3d ago".
+export function ago(iso) {
+  if (!iso) return '';
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return '';
+  const s = Math.max(0, Math.round((Date.now() - then) / 1000));
+  if (s < 45) return 'just now';
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.round(h / 24);
+  if (d < 7) return `${d}d ago`;
+  return formatShort(toKey(new Date(iso)));
+}
+
 // The HH:MM (24h) part of an ISO timestamp, in the local time zone.
 export function hmOf(iso) {
   if (!iso) return '';

@@ -275,6 +275,9 @@ function nameHTML(d) {
   <div class="stack">
     ${field('What should I call you?', `<input name="nickname" maxlength="24" autocomplete="nickname" value="${esc(d.nickname)}">`)}
     ${field('What’s my name?', `<input name="frogName" maxlength="24" autocomplete="off" value="${esc(d.frogName)}">`)}
+    <section class="card">
+      <p class="card__hint">💡 Once you’re in, make a free account in <b>Settings</b> to sync between your phone and computer, add <b>pond friends</b>, and turn on gentle <b>reminders</b>.</p>
+    </section>
   </div>`;
 }
 

@@ -1,23 +1,23 @@
 # Pip's Pond
 
-A meal plan tracker (swipes + retail points) with a frog who keeps you on pace.
-Plain HTML/CSS/JS, no build step. Works offline and installs to your home screen.
+Meal plan tracker for swipes and retail points. There's a frog named Pip. He gets sad if you overspend.
 
-**Live app:** https://gayoreo.github.io/pips-pond/
+Live: https://gayoreo.github.io/pips-pond/
 
-## Run locally
-Open the folder in VS Code → right-click `index.html` → **Open with Live Server**.
+## Running it
+Plain HTML, CSS and JS, no build step. Open the folder in VS Code, right-click `index.html`, pick Open with Live Server.
 
 ## Tests
-With Live Server running, open `/tests/calc.test.html`.
+Run Live Server and open `/tests/calc.test.html`.
 
-## Folders
-- `js/core/` budget math (calc, weights, semesters), no screen code
-- `js/data/` storage on this device, import/export
+## What's where
+- `js/core/` the budget math (calc, weights, semesters)
+- `js/data/` saving, syncing, import and export
 - `js/pip/` the frog: drawing, moods, lines
-- `js/ui/` shared UI helpers (info popups, sounds, widgets, report card)
-- `js/views/` one file per screen
-- `sw.js` offline cache. **Bump `VERSION` when you add or rename files.**
+- `js/ui/` shared bits (popups, sounds, widgets, report card)
+- `js/views/` the screens, one file each
+- `supabase/` database schema and functions for accounts, friends and reminders
+- `sw.js` offline cache. Bump `VERSION` when you add or rename files.
 
 ## Shortcut links
 `?log=swipe`, `?log=exchange`, `?log=guest`, `?log=points`, `?log=points&amount=5.45`, `?fav=Latte`

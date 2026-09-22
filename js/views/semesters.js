@@ -1,32 +1,38 @@
-import { getSettings, getEntries, getArchive, getProfile } from '../data/db.js';
+import { getSettings, getEntries, getArchive, getProfile, switchSemester } from '../data/db.js';
 import { reportStats, rolloverFor, nextSemesterDefaults } from '../core/semester.js';
 import { formatShort, todayKey } from '../core/dates.js';
 import { entriesCSV, download, slug } from '../data/importExport.js';
 import { esc, money, plural } from '../ui/dom.js';
 import { reportHTML } from '../ui/report.js';
-import { beginNewSemester } from './tutorial.js';
+import { beginNewSemester, beginFutureSemester } from './tutorial.js';
+import { toast } from '../ui/toast.js';
 
 const openReports = new Set(); // which report cards are expanded
 
 export async function renderSemesters(root) {
   const [settings, entries, archive, profile] = await Promise.all([getSettings(), getEntries(), getArchive(), getProfile()]);
   if (!settings) { location.hash = '#/settings'; return; }
+  const today = todayKey();
   const roll = rolloverFor(settings, entries);
-  const past = [...archive].reverse();
+  // Newest-first for past semesters, soonest-first for future ones.
+  const past = archive.filter((a) => a.settings.end < today).reverse();
+  const future = archive.filter((a) => a.settings.end >= today && a.settings.start > today)
+    .sort((a, b) => a.settings.start.localeCompare(b.settings.start));
 
-  const item = (id, s, list, current) => `
+  const item = (id, s, list, { current = false, future: isFuture = false } = {}) => `
     <section class="card semester">
       <div class="semester__head">
         <div>
-          <h2 class="card__title">${esc(s.semesterName)}${current ? ' <span class="muted">(now)</span>' : ''}</h2>
-          <p class="card__hint">${formatShort(s.start)} – ${formatShort(s.end)} · ${plural(list.length, 'entry').replace('entrys', 'entries')}</p>
+          <h2 class="card__title">${esc(s.semesterName)}${current ? ' <span class="muted">(now)</span>' : isFuture ? ' <span class="muted">(upcoming)</span>' : ''}</h2>
+          <p class="card__hint">${formatShort(s.start)} – ${formatShort(s.end)}${isFuture ? '' : ` · ${plural(list.length, 'entry').replace('entrys', 'entries')}`}</p>
         </div>
       </div>
       <div class="row">
-        <button type="button" class="btn-plain" data-report="${esc(id)}" aria-expanded="${openReports.has(id)}">${openReports.has(id) ? 'hide' : 'report card'}</button>
-        <button type="button" class="btn-plain" data-csv="${esc(id)}">download CSV</button>
+        ${current ? '' : `<button type="button" class="btn-plain" data-switch="${esc(id)}">switch to this</button>`}
+        ${isFuture ? '' : `<button type="button" class="btn-plain" data-report="${esc(id)}" aria-expanded="${openReports.has(id)}">${openReports.has(id) ? 'hide' : 'report card'}</button>
+        <button type="button" class="btn-plain" data-csv="${esc(id)}">download CSV</button>`}
       </div>
-      ${openReports.has(id) ? reportHTML(reportStats(s, list), { frogName: profile.frogName }) : ''}
+      ${!isFuture && openReports.has(id) ? reportHTML(reportStats(s, list), { frogName: profile.frogName }) : ''}
     </section>`;
 
   root.innerHTML = `
@@ -37,10 +43,10 @@ export async function renderSemesters(root) {
       <span class="spacer"></span>
     </div>
 
-    ${item('current', settings, entries, true)}
+    ${item('current', settings, entries, { current: true })}
 
     <section class="card card--sticky">
-      <h2 class="card__title">Start next semester</h2>
+      <h2 class="card__title">End this semester</h2>
       <p class="card__hint">This semester moves into your history (you can still see and download it).
         ${roll.swipes || roll.points
           ? `Carrying over: ${plural(roll.swipes, 'swipe')} and ${money(roll.points)}.`
@@ -49,11 +55,20 @@ export async function renderSemesters(root) {
       <button type="button" class="btn-sketch btn-sketch--go" data-next-semester>Set up next semester</button>
     </section>
 
+    ${future.length ? '<h2 class="page-title page-title--small">Upcoming semesters</h2>' : ''}
+    ${future.map((a) => item(a.id, a.settings, a.entries, { future: true })).join('')}
+
+    <section class="card">
+      <h2 class="card__title">Plan ahead</h2>
+      <p class="card__hint">Set up a future semester’s dates and budget now, and switch to it whenever it starts. Your current semester keeps going until you switch.</p>
+      <button type="button" class="btn-sketch" data-add-future>Set up a future semester</button>
+    </section>
+
     ${past.length ? '<h2 class="page-title page-title--small">Past semesters</h2>' : ''}
-    ${past.map((a) => item(a.id, a.settings, a.entries, false)).join('')}
+    ${past.map((a) => item(a.id, a.settings, a.entries)).join('')}
   </div>`;
 
-  root.querySelector('.semesters').addEventListener('click', (e) => {
+  root.querySelector('.semesters').addEventListener('click', async (e) => {
     const rep = e.target.closest('[data-report]');
     if (rep) {
       const id = rep.dataset.report;
@@ -68,6 +83,17 @@ export async function renderSemesters(root) {
       download(`${slug(sem.settings.semesterName)}.csv`, entriesCSV([{ name: sem.settings.semesterName, entries: sem.entries }]), 'text/csv');
       return;
     }
+    const sw = e.target.closest('[data-switch]');
+    if (sw) {
+      const id = sw.dataset.switch;
+      const target = archive.find((a) => a.id === id);
+      if (!target) return;
+      if (!confirm(`Switch to ${target.settings.semesterName}? ${settings.semesterName} will be saved and you can switch back any time.`)) return;
+      await switchSemester(id);
+      toast(`Switched to ${target.settings.semesterName}!`);
+      return renderSemesters(root);
+    }
+    if (e.target.closest('[data-add-future]')) return beginFutureSemester();
     if (e.target.closest('[data-next-semester]')) {
       if (todayKey() <= settings.end &&
           !confirm(`${settings.semesterName} runs until ${formatShort(settings.end)}. Start the next semester anyway? This one will move into your history.`)) return;

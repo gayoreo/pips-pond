@@ -131,7 +131,9 @@ export async function saveProfile(patch) {
 }
 
 // ---------- semesters ----------
-// Past semesters: [{ id, settings, entries, closedAt }]
+// Other semesters (past, future, or just swapped out): [{ id, settings, entries, closedAt? }]
+// closedAt is set when a semester is swapped out of "current"; a future semester added
+// ahead of time (never yet current) won't have one.
 export async function getArchive() {
   return load().archive;
 }
@@ -149,6 +151,39 @@ export async function startNewSemester(nextSettings) {
   }
   tombstoneAll(data);
   data.settings = { ...nextSettings, updatedAt: now() };
+  touch(data, 'settings', 'archive');
+  save(data);
+}
+
+// Adds a semester without disturbing the current one — for setting up a future
+// semester ahead of time. Not switched to; just sits in the archive until you do.
+export async function addFutureSemester(settings) {
+  const data = load();
+  data.archive.push({ id: newId(), settings: { ...settings, updatedAt: now() }, entries: [] });
+  touch(data, 'archive');
+  save(data);
+  return data.archive[data.archive.length - 1].id;
+}
+
+// Swaps the current semester with one sitting in the archive (past or future).
+// The outgoing semester takes the archive slot the incoming one just vacated, so
+// nothing is lost — you can freely switch back and forth. Only one semester is
+// ever "live" for logging at a time; the other keeps its own entries, frozen.
+export async function switchSemester(id) {
+  const data = load();
+  const i = data.archive.findIndex((a) => a.id === id);
+  if (i < 0 || !data.settings) return;
+  const incoming = data.archive[i];
+  const outgoing = {
+    id: newId(),
+    settings: data.settings,
+    entries: data.entries.filter((e) => !e.deleted).map(({ synced, ...e }) => e),
+    closedAt: now(),
+  };
+  data.archive[i] = outgoing;
+  tombstoneAll(data); // clears the outgoing semester's entries from the live array (as tombstones, for sync)
+  data.entries.push(...incoming.entries.map((e) => ({ ...e, synced: false })));
+  data.settings = { ...incoming.settings, updatedAt: now() };
   touch(data, 'settings', 'archive');
   save(data);
 }

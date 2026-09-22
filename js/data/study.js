@@ -7,6 +7,7 @@ import { cardsDueMap } from './decks.js';
 export const TASK_TYPES = {
   homework:   { label: 'Homework' },
   assignment: { label: 'Assignment' },
+  quiz:       { label: 'Quiz'},
   exam:       { label: 'Exam' },
   reading:    { label: 'Reading' },
 };
@@ -454,7 +455,7 @@ export function guessTaskType(title) {
   if (/\b(exam|midterm|final|test)\b/i.test(title)) return 'exam';
   if (/\bread(ing)?\b/i.test(title)) return 'reading';
   if (homeworky) return 'homework'; // "CH 3 HW Quiz" is homework, not an exam
-  if (/\bquiz(zes)?\b/i.test(title)) return 'exam';
+  if (/\bquiz(zes)?\b/i.test(title)) return 'quiz';
   if (/\b(chapter|ch\.?\s*\d|pages?|pp\.)/i.test(title)) return 'reading';
   return 'assignment';
 }

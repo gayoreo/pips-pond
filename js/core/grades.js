@@ -22,7 +22,7 @@ export const GRADE_TEMPLATES = {
       { name: 'Homework', weight: 20 }, { name: 'Quizzes', weight: 20 }, { name: 'Exams', weight: 60 },
     ],
   }),
-  points: () => ({ mode: 'points', categories: [{ name: 'Assignments' }, { name: 'Exams' }] }),
+  points: () => ({ mode: 'points', categories: [{ name: 'Assignments' }, { name: 'Quizzes'}, { name: 'Exams' }] }),
 };
 
 export const DEFAULT_GRADING = {

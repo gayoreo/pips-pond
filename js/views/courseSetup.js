@@ -157,7 +157,7 @@ function stepHTML() {
         <label class="field">What<input data-y="title" maxlength="80" value="${esc(x.title)}"></label>
         <div class="grid-2">
           <label class="field">Kind
-            <select data-y="type">${['homework', 'assignment', 'reading', 'exam'].map((k) => `<option value="${k}"${x.type === k ? ' selected' : ''}>${TASK_TYPES[k].label}</option>`).join('')}</select>
+            <select data-y="type">${['homework', 'assignment', 'reading', 'quiz', 'exam'].map((k) => `<option value="${k}"${x.type === k ? ' selected' : ''}>${TASK_TYPES[k].label}</option>`).join('')}</select>
           </label>
           <label class="field">Due<input type="date" data-y="due" value="${esc(x.due)}"></label>
         </div>

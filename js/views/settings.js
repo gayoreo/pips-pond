@@ -14,6 +14,7 @@ import { myProfile, signOut } from '../data/auth.js';
 import { syncNow, syncState, SYNC_EVENT } from '../data/sync.js';
 import { lockEnabled, lockSupported, enableLock, disableLock } from '../ui/lock.js';
 import { pushStatus, enablePush, disablePush, sendTestPush } from '../data/push.js';
+import { incomingCount, FRIENDS_EVENT } from '../data/social.js';
 
 const SYNC_TEXT = {
   idle: 'Ready.', syncing: 'Syncing…', synced: 'All synced.', offline: 'Offline — will sync when you’re back.',
@@ -130,7 +131,7 @@ export async function renderSettings(root) {
       <p class="card__hint" id="sync-status">${esc(SYNC_TEXT[syncState.status] ?? '')}</p>
       <div class="row">
         <button type="button" class="btn-sketch" id="sync-now">Sync now</button>
-        <a class="btn-plain" href="#/friends">Pond friends →</a>
+        <a class="btn-plain" href="#/friends">Pond friends →${incomingCount() ? ` <span class="badge" aria-label="${incomingCount()} pending ${incomingCount() === 1 ? 'request' : 'requests'}">${incomingCount()}</span>` : ''}</a>
       </div>
       <button type="button" class="btn-plain btn-plain--danger" id="sign-out">Sign out of this device</button>
     </section>
@@ -402,6 +403,12 @@ export async function renderSettings(root) {
       const el = document.getElementById('sync-status');
       if (el) el.textContent = SYNC_TEXT[syncState.status] ?? '';
     });
+  }
+
+  // Re-render when friends arrive/change (so the pending-requests badge stays current).
+  if (!renderSettings._friendsWired) {
+    renderSettings._friendsWired = true;
+    window.addEventListener(FRIENDS_EVENT, () => { if (location.hash === '#/settings') renderSettings(root); });
   }
 
   root.querySelector('#sign-out')?.addEventListener('click', async () => {

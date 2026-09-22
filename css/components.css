@@ -681,6 +681,15 @@ body.is-locked { overflow: hidden; }
 .pings .ping { margin: 0; font-family: var(--font-hand); font-weight: 700; font-size: 18px; }
 .pings .btn-plain { align-self: flex-end; }
 
+/* ---- Small pending-count badge (e.g. next to "Pond friends") ---- */
+.badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 20px; height: 20px; padding: 0 6px; margin-left: 2px;
+  border-radius: 999px; background: var(--green-fill); color: var(--on-green);
+  font-family: var(--font-body); font-size: 13px; font-weight: 800; line-height: 1;
+  vertical-align: middle;
+}
+
 /* ---- Friends page ---- */
 .friends, .reqs { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 .friend { display: flex; align-items: center; gap: 10px; }

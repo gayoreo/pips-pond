@@ -313,13 +313,45 @@ const stripNum = (t) => String(t || '').replace(/\s+\d+\s*$/, '').trim();
 function renumberSeries(s, seriesId) {
   const r = s.series.find((x) => x.id === seriesId);
   if (!r || !r.autoNumber) return;
+
   const base = stripNum(r.title) || 'Item';
-  const copies = s.tasks.filter((t) => t.seriesId === seriesId && !t.deleted).sort((a, b) => a.due.localeCompare(b.due));
-  const taken = new Set(copies.filter((t) => t.done && Number.isInteger(t.num)).map((t) => t.num));
-  let counter = 0;
-  const nextFree = () => { do { counter += 1; } while (taken.has(counter)); return counter; };
+  const copies = s.tasks
+    .filter((t) => t.seriesId === seriesId && !t.deleted)
+    .sort((a, b) => a.due.localeCompare(b.due));
+
+  if (copies.length === 0) return;
+
+  // Extract a trailing number from a string, e.g., "Quiz 4" -> 4
+  const extractNum = (str) => {
+    const match = String(str || '').match(/\b(\d+)\s*$/);
+    return match ? parseInt(match[1], 10) : null;
+  };
+
+  // Find the first active (non-done) task to determine the series start offset
+  const firstActive = copies.find((t) => !t.done);
+  const explicitStart = firstActive ? extractNum(firstActive.title) : null;
+
+  // If the user explicitly renamed the first item, start from that number; otherwise default to 1
+  const baseOffset = explicitStart !== null ? explicitStart : 1;
+
+  const taken = new Set(
+    copies
+      .filter((t) => t.done && Number.isInteger(t.num))
+      .map((t) => t.num)
+  );
+
+  let counter = baseOffset - 1;
+  const nextFree = () => {
+    do {
+      counter += 1;
+    } while (taken.has(counter));
+    return counter;
+  };
+
   for (const t of copies) {
-    if (!(t.done && Number.isInteger(t.num))) t.num = nextFree();
+    if (!(t.done && Number.isInteger(t.num))) {
+      t.num = nextFree();
+    }
     t.title = `${base} ${t.num}`;
   }
 }

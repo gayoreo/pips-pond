@@ -869,6 +869,15 @@ body.is-locked { overflow: hidden; }
 .today-sched li { display: flex; gap: 10px; align-items: baseline; padding-left: 8px; border-left: 6px solid var(--course); font-size: 15px; }
 .today-sched li.is-past { opacity: 0.5; }
 .today-sched__time { flex: none; font-weight: 800; font-size: 13px; min-width: 128px; }
+.today-sched__head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.today-sched__head .today-sched__title { margin: 0; }
+.today-sched__out { font-size: 13px; }
+.today-sched__off { margin: 0 0 6px; font-size: 13px; font-weight: 700; color: var(--ink-2); }
+.today-sched__row { display: contents; text-align: left; background: none; border: none; padding: 0; font: inherit; color: inherit; cursor: pointer; }
+.today-sched li.is-off { opacity: 0.55; }
+.today-sched li.is-off .today-sched__row span, .today-sched li.is-off > span { text-decoration: line-through; text-decoration-color: var(--ink-2); }
+.wk-item.is-off button { opacity: 0.6; }
+.wk-item.is-off .wk-item__title { text-decoration: line-through; text-decoration-color: var(--ink-2); }
 
 .course-row__name { flex: 1; min-width: 0; font-size: 15px; line-height: 1.3; }
 .course-swatch[aria-pressed="true"] { box-shadow: 0 0 0 3px var(--paper), 0 0 0 5px var(--ink); }

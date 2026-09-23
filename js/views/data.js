@@ -1,5 +1,6 @@
 import { getSettings, getEntries, getArchive, addEntries, exportAll, importAll } from '../data/db.js';
-import { parseCSV, mapSchoolRows, download, entriesCSV } from '../data/importExport.js';
+import { parseCSV, mapSchoolRows, download, entriesCSV, toCSV } from '../data/importExport.js';
+import { studyExportRows } from '../data/study.js';
 import { todayKey, formatShort } from '../core/dates.js';
 import { esc, money } from '../ui/dom.js';
 import { infoBtn } from '../ui/info.js';
@@ -89,7 +90,9 @@ export async function renderData(root) {
       <h2 class="card__title">Download ${infoBtn('The full backup has everything: settings, entries, favorites, past semesters and your frog’s name. Restore it below on any device.')}</h2>
       <p class="card__hint">${entries.length} entries this semester (${money(total)} in points)${archive.length ? `, plus ${archive.length} past ${archive.length === 1 ? 'semester' : 'semesters'}` : ''}.</p>
       <button type="button" class="btn-sketch" data-export="csv">Spreadsheet (CSV), all semesters</button>
+      <button type="button" class="btn-sketch" data-export="study">Courses &amp; coursework (CSV)</button>
       <button type="button" class="btn-sketch" data-export="json">Full backup (JSON)</button>
+      <p class="card__hint">Courses &amp; coursework covers your classes, class schedule, scores and every assignment, past and present.</p>
     </section>
 
     <section class="card">
@@ -116,6 +119,8 @@ export async function renderData(root) {
       if (ex.dataset.export === 'csv') {
         const sems = [...archive.map((a) => ({ name: a.settings.semesterName, entries: a.entries })), { name: settings.semesterName, entries }];
         download(`pips-pond-${todayKey()}.csv`, entriesCSV(sems), 'text/csv');
+      } else if (ex.dataset.export === 'study') {
+        download(`pips-pond-courses-${todayKey()}.csv`, toCSV(studyExportRows()), 'text/csv');
       } else {
         download(`pips-pond-backup-${todayKey()}.json`, JSON.stringify(await exportAll(), null, 2), 'application/json');
       }
@@ -159,4 +164,3 @@ export async function renderData(root) {
     }
   });
 }
-

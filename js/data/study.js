@@ -33,7 +33,7 @@ export function studyHours(profile) {
   return h.to > h.from ? h : { ...DEFAULT_HOURS };
 }
 
-const blank = () => ({ courses: [], tasks: [], series: [], blocks: [] });
+const blank = () => ({ courses: [], tasks: [], series: [], blocks: [], offDays: [], classSkips: {} });
 
 function norm(s) {
   if (!s || typeof s !== 'object' || Array.isArray(s)) return blank();
@@ -42,6 +42,8 @@ function norm(s) {
     tasks: Array.isArray(s.tasks) ? s.tasks : [],
     series: Array.isArray(s.series) ? s.series : [],
     blocks: Array.isArray(s.blocks) ? s.blocks : [],
+    offDays: Array.isArray(s.offDays) ? s.offDays : [],
+    classSkips: s.classSkips && typeof s.classSkips === 'object' && !Array.isArray(s.classSkips) ? s.classSkips : {},
   };
 }
 
@@ -66,6 +68,42 @@ export function ensureCourseSemesters() {
 
 // Courses that belong to one semester (by its lasting id), for past semesters and exports.
 export const coursesForSemester = (key) => (key ? norm(readAll().study).courses.filter((c) => c.semKey === key) : []);
+
+// Everything school-related across every semester, as spreadsheet rows: courses, their class and lab
+// schedule, their scores, and all coursework past and present. First cell of each row says which kind.
+export function studyExportRows() {
+  const data = readAll();
+  const s = norm(data.study);
+  const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const semName = {};
+  if (data.settings?.key) semName[data.settings.key] = data.settings.semesterName || 'This semester';
+  for (const a of data.archive ?? []) if (a.settings?.key) semName[a.settings.key] = a.settings.semesterName || 'Past semester';
+  const sem = (c) => semName[c?.semKey] || '';
+  const byId = Object.fromEntries(s.courses.map((c) => [c.id, c]));
+  const rows = [['record', 'semester', 'course', 'code', 'detail', 'type', 'days', 'start', 'end', 'place', 'due', 'status', 'category', 'score', 'out_of']];
+  const row = (o) => rows.push([o.record, o.semester ?? '', o.course ?? '', o.code ?? '', o.detail ?? '', o.type ?? '', o.days ?? '', o.start ?? '', o.end ?? '', o.place ?? '', o.due ?? '', o.status ?? '', o.category ?? '', o.score ?? '', o.outOf ?? '']);
+
+  for (const c of s.courses) {
+    row({ record: 'course', semester: sem(c), course: c.name, code: c.code || '', detail: [c.prof, c.profEmail, c.ta, c.taEmail].filter(Boolean).join(' · ') });
+    for (const m of c.meetings ?? []) {
+      row({ record: 'schedule', semester: sem(c), course: c.name, code: c.code || '', type: m.kind, days: (m.days ?? []).map((d) => DOW[d]).join(' '), start: m.start || '', end: m.end || '', place: m.place || '' });
+    }
+    const catName = {};
+    for (const g of c.grading?.groups ?? []) for (const cat of g.categories ?? []) catName[cat.id] = `${g.name}: ${cat.name}`;
+    for (const it of c.grades ?? []) {
+      row({ record: 'score', semester: sem(c), course: c.name, code: c.code || '', detail: it.name || '', status: it.status || 'graded', category: catName[it.catId] || '', score: it.status === 'graded' ? String(it.earned ?? '') : '', outOf: String(it.possible ?? '') });
+    }
+  }
+  for (const t of s.tasks) {
+    if (t.deleted) continue;
+    const c = byId[t.courseId];
+    row({ record: 'coursework', semester: sem(c), course: c?.name || '', code: c?.code || '', detail: t.title || '', type: t.type || '', start: t.time || '', end: t.end || '', due: t.due || '', status: t.done ? 'done' : 'open' });
+  }
+  for (const r of s.offDays ?? []) {
+    row({ record: 'break', detail: r.label || 'Break', start: r.from, end: r.to });
+  }
+  return rows;
+}
 
 // Runs `fn` on a copy of the study data, saves it, and marks it for syncing.
 function change(fn, notify = true) {
@@ -352,6 +390,25 @@ export function meetingsOn(s, day) {
 
 export const timeRange = (m) => (m.end ? `${formatHM(m.start)} to ${formatHM(m.end)}` : formatHM(m.start));
 
+// ---------- holidays and one-day cancellations ----------
+// offDays: [{ id, from, to, label }] full-day breaks with no classes or labs (homework and exams stay).
+// classSkips: { "meetingId:YYYY-MM-DD": 1 } one class or lab called off on one date.
+const skipKey = (meetingId, date) => `${meetingId}:${date}`;
+
+// The break that covers a day, or null.
+export const isClassOff = (s, day) => (s.offDays ?? []).find((r) => day >= r.from && day <= r.to) || null;
+export const isClassCancelled = (s, meetingId, date) => Boolean(s.classSkips && s.classSkips[skipKey(meetingId, date)]);
+
+export const cancelClass = (meetingId, date) => change((s) => { s.classSkips ??= {}; s.classSkips[skipKey(meetingId, date)] = 1; });
+export const uncancelClass = (meetingId, date) => change((s) => { if (s.classSkips) delete s.classSkips[skipKey(meetingId, date)]; });
+
+export const addOffDay = ({ from, to, label }) => change((s) => {
+  s.offDays ??= [];
+  s.offDays.push({ id: newId(), from, to: to || from, label: (label || 'Break').trim() });
+  s.offDays.sort((a, b) => a.from.localeCompare(b.from));
+});
+export const removeOffDay = (id) => change((s) => { s.offDays = (s.offDays ?? []).filter((x) => x.id !== id); });
+
 // ---------- your own calendar blocks (work, appointments, study time, other) ----------
 // { id, kind, title, start: 'HH:MM', end: 'HH:MM', place,
 //   weekly: days: [0-6], from, until    one-time: dates: ['YYYY-MM-DD', ...] (date = the first one) }
@@ -410,12 +467,19 @@ function cutForExams(items) {
 // Everything on one day's calendar, earliest first: classes, labs, your own blocks and timed exams.
 // [{ kind: 'class'|'lab'|'exam'|'study'|'work'|'appointment'|'other', title, start, end, place, color, course?, meeting?, block?, task? }]
 export function dayItems(s, day) {
-  const items = meetingsOn(s, day).map(({ course, meeting }) => ({
-    kind: meeting.kind, title: course.name, start: meeting.start, end: meeting.end, place: meeting.place,
-    color: course.color, course, meeting,
-    // Office hours are there if you want them, so they don't count as busy time.
-    soft: meeting.kind === 'office' || meeting.kind === 'ta',
-  }));
+  const offRange = isClassOff(s, day);
+  const skips = s.classSkips ?? {};
+  const items = meetingsOn(s, day).map(({ course, meeting }) => {
+    const isClass = meeting.kind === 'class' || meeting.kind === 'lab';
+    const cancelled = isClass && Boolean(skips[skipKey(meeting.id, day)]);
+    const holiday = isClass && offRange ? (offRange.label || 'Break') : '';
+    return {
+      kind: meeting.kind, title: course.name, start: meeting.start, end: meeting.end, place: meeting.place,
+      color: course.color, course, meeting, cancelled, holiday,
+      // Office hours, cancelled classes and holidays don't count as busy time.
+      soft: meeting.kind === 'office' || meeting.kind === 'ta' || cancelled || Boolean(holiday),
+    };
+  });
   for (const b of s.blocks) if (blockOn(b, day)) items.push({ kind: b.kind, title: b.title || BLOCK_KINDS[b.kind]?.label, start: b.start, end: b.end, place: b.place, block: b });
   const courses = Object.fromEntries(s.courses.map((c) => [c.id, c]));
   for (const t of liveTasks(s)) {
@@ -597,11 +661,21 @@ export function scheduleForFriends(data) {
   const today = todayKey();
   const horizon = addDays(today, 60);
   const out = [];
+  // Days off and one-day cancellations so friends see the gap too. Only dates in the shared window.
+  const holidayDates = [];
+  for (const r of s.offDays ?? []) {
+    for (let k = r.from < today ? today : r.from, end = r.to > horizon ? horizon : r.to; k <= end; k = addDays(k, 1)) holidayDates.push(k);
+  }
+  const skipsFor = (meetingId) => Object.keys(s.classSkips ?? {})
+    .filter((k) => k.startsWith(`${meetingId}:`))
+    .map((k) => k.slice(meetingId.length + 1))
+    .filter((d) => d >= today && d <= horizon);
   if (any('class')) {
     for (const c of s.courses) {
       for (const m of c.meetings ?? []) {
         if (!m.days?.length || !m.start || (m.kind !== 'class' && m.kind !== 'lab')) continue;
-        out.push({ cat: 'class', kind: m.kind === 'lab' ? 'lab' : 'class', name: c.name, code: c.code || '', color: c.color, days: m.days, start: m.start, end: m.end || '', ...place(m.place) });
+        const skip = [...new Set([...skipsFor(m.id), ...holidayDates])];
+        out.push({ cat: 'class', kind: m.kind === 'lab' ? 'lab' : 'class', name: c.name, code: c.code || '', color: c.color, days: m.days, start: m.start, end: m.end || '', ...place(m.place), ...(skip.length ? { skip } : {}) });
       }
     }
   }
@@ -636,7 +710,7 @@ const sharedDay = (m, day) => (Array.isArray(m.dates) && m.dates.length
   : Array.isArray(m.days) && m.days.includes(dayOfWeek(day)) && (!m.from || day >= m.from) && (!m.until || day <= m.until));
 export function sharedOn(items, day) {
   const list = (Array.isArray(items) ? items : [])
-    .filter((m) => m && typeof m === 'object' && HM.test(m.start) && sharedDay(m, day))
+    .filter((m) => m && typeof m === 'object' && HM.test(m.start) && sharedDay(m, day) && !(Array.isArray(m.skip) && m.skip.includes(day)))
     .map((m) => ({
       kind: SHARED_KINDS.includes(m.kind) ? m.kind : 'other', name: String(m.name || 'Busy'), title: String(m.name || 'Busy'),
       code: String(m.code || ''), color: m.color, start: m.start, end: HM.test(m.end) ? m.end : '',

@@ -6,6 +6,7 @@ import {
   dayItems, freeGaps, timeRange, saveBlock, deleteBlock, TASK_TYPES, BLOCK_KINDS, COURSE_COLORS,
   studyHours, seriesTasks, restoreTask, restoreTaskObject, restoreBlockObject, updateSeries, ensureCourseSemesters,
   needsScore, skipScore, coursesForSemester,
+  isClassOff, isClassCancelled, cancelClass, uncancelClass, addOffDay, removeOffDay,
 } from '../data/study.js';
 import { courseGrade, gradingOf, gpaOf, fmtPct, fmtGpa, DEFAULT_GPA_SCALE } from '../core/grades.js';
 import { openCourse, scoreTask } from './course.js';
@@ -68,14 +69,25 @@ function todayScheduleHTML(s, today) {
   const items = dayItems(s, today);
   if (!items.length) return '';
   const now = nowHM();
+  const off = isClassOff(s, today);
+  const canOut = items.some((i) => (i.kind === 'class' || i.kind === 'lab') && !i.cancelled && !i.holiday && (i.end || addHour(i.start)) > now);
   return `
   <section class="today-sched" aria-label="Today's schedule">
-    <p class="today-sched__title">Today</p>
-    <ul>${items.map((i) => `
-      <li class="${i.end && i.end < now ? 'is-past' : ''}" style="--course:${i.soft || !i.color ? `var(--kind-${i.kind})` : i.color}">
-        <span class="today-sched__time">${esc(timeRange(i))}</span>
-        <span>${i.kind === 'exam' ? '📝 ' : ''}${esc(i.title)}${i.kind === 'lab' ? ' lab' : ''}${i.place ? ` <span class="muted">· ${esc(i.place)}</span>` : ''}</span>
-      </li>`).join('')}
+    <div class="today-sched__head">
+      <p class="today-sched__title">Today</p>
+      ${canOut ? '<button type="button" class="btn-plain today-sched__out" data-out-of-class>I’m out of class</button>' : ''}
+    </div>
+    ${off ? `<p class="today-sched__off">🌴 ${esc(off.label || 'Break')} · no classes today</p>` : ''}
+    <ul>${items.map((i) => {
+      const cls = (i.kind === 'class' || i.kind === 'lab') && i.meeting;
+      const tag = i.cancelled ? ' <span class="muted">· cancelled</span>' : i.holiday ? ` <span class="muted">· ${esc(i.holiday)}</span>` : '';
+      const inner = `<span class="today-sched__time">${esc(timeRange(i))}</span>
+        <span>${i.kind === 'exam' ? '📝 ' : ''}${esc(i.title)}${i.kind === 'lab' ? ' lab' : ''}${tag}${i.place && !i.cancelled && !i.holiday ? ` <span class="muted">· ${esc(i.place)}</span>` : ''}</span>`;
+      return `
+      <li class="${i.end && i.end < now ? 'is-past' : ''}${i.cancelled || i.holiday ? ' is-off' : ''}" style="--course:${i.soft || !i.color ? `var(--kind-${i.kind})` : i.color}">
+        ${cls ? `<button type="button" class="today-sched__row" data-class="${esc(i.meeting.id)}|${esc(i.course.id)}|${today}">${inner}</button>` : inner}
+      </li>`;
+    }).join('')}
     </ul>
   </section>`;
 }
@@ -139,14 +151,22 @@ function weekHTML(s, today, hours) {
     const due = tasks.filter((t) => t.due === day && !(t.type === 'exam' && t.time));
     const gaps = day >= today ? freeGaps(items, { from: day === today && now > hours.from ? now : hours.from, to: hours.to }) : [];
     const rows = [
-      ...items.map((i) => ({ at: i.start, html: `
-        <li class="wk-item wk-item--${i.kind}" style="--course:${i.soft || !i.color ? `var(--kind-${i.kind})` : i.color}">
-          <button type="button" ${i.task ? `data-open="${esc(i.task.id)}"` : i.block ? `data-block="${esc(i.block.id)}"` : `data-edit-course="${esc(i.course.id)}"`}>
+      ...items.map((i) => {
+        const cls = (i.kind === 'class' || i.kind === 'lab') && i.meeting;
+        const attr = i.task ? `data-open="${esc(i.task.id)}"`
+          : i.block ? `data-block="${esc(i.block.id)}"`
+          : cls ? `data-class="${esc(i.meeting.id)}|${esc(i.course.id)}|${day}"`
+          : `data-edit-course="${esc(i.course.id)}"`;
+        const meta = i.cancelled ? 'Cancelled' : i.holiday ? esc(i.holiday) : `${KIND_LABEL[i.kind] ?? ''}${i.place ? ` · ${esc(i.place)}` : ''}`;
+        return { at: i.start, html: `
+        <li class="wk-item wk-item--${i.kind}${i.cancelled || i.holiday ? ' is-off' : ''}" style="--course:${i.soft || !i.color ? `var(--kind-${i.kind})` : i.color}">
+          <button type="button" ${attr}>
             <span class="wk-item__time">${esc(timeRange(i))}</span>
             <span class="wk-item__title">${esc(i.title)}</span>
-            <span class="wk-item__meta">${KIND_LABEL[i.kind] ?? ''}${i.place ? ` · ${esc(i.place)}` : ''}</span>
+            <span class="wk-item__meta">${meta}</span>
           </button>
-        </li>` })),
+        </li>` };
+      }),
       ...gaps.map((g) => ({ at: g.start, html: `
         <li class="wk-free">
           <span>Free ${esc(formatHM(g.start))} to ${esc(formatHM(g.end))}</span>
@@ -248,8 +268,10 @@ async function gradesHTML(s, profile) {
       <h2 class="card__title">Needs a score <span class="muted">${waiting.length}</span></h2>
       <ul class="needs-list">${waiting.slice(0, 8).map((t) => `
         <li><span>${esc(t.title)} <span class="muted">${esc(courses[t.courseId]?.name ?? '')}</span></span>
-          <button type="button" class="btn-plain" data-score-task="${esc(t.id)}">add score</button>
+          <button type="button" class="btn-plain" data-score-task="${esc(t.id)}">score</button>
+          <button type="button" class="btn-plain" data-setup-task="${esc(t.id)}">set up</button>
           <button type="button" class="btn-plain btn-plain--muted" data-skip-task="${esc(t.id)}">skip</button></li>`).join('')}</ul>
+      <p class="card__hint">“Set up” files it under a category with its points but no grade yet, so it’s ready for “What do I need?”.</p>
     </section>` : ''}
     ${s.courses.length ? `<ul class="grade-courses">${s.courses.map((c) => {
       const r = courseGrade(c);
@@ -409,8 +431,20 @@ export async function renderStudy(root) {
       const course = getStudy().courses.find((c) => c.id === task?.courseId);
       return course ? scoreTask(course, task) : undefined;
     }
+    const setupBtn = t.closest('[data-setup-task]');
+    if (setupBtn) {
+      const task = getStudy().tasks.find((x) => x.id === setupBtn.dataset.setupTask);
+      const course = getStudy().courses.find((c) => c.id === task?.courseId);
+      return course ? scoreTask(course, task, { status: 'pending' }) : undefined;
+    }
     const skipBtn = t.closest('[data-skip-task]');
     if (skipBtn) { skipScore(skipBtn.dataset.skipTask); return toast('Skipped. It won’t ask again.'); }
+    const classBtn = t.closest('[data-class]');
+    if (classBtn) {
+      const [mid, cid, date] = classBtn.dataset.class.split('|');
+      return openClassSheet(mid, cid, date, root);
+    }
+    if (t.closest('[data-out-of-class]')) return outOfClassNow(root);
     if (t.closest('[data-add-block]')) return openBlockSheet(null);
     if (t.closest('[data-new-deck]')) return openNewDeckSheet();
     if (t.closest('[data-deck-code]')) return openCodeSheet();
@@ -439,6 +473,66 @@ export async function renderStudy(root) {
 }
 
 const addHour = (hm) => { const [h, m] = hm.split(':').map(Number); return `${String(Math.min(h + 1, 23)).padStart(2, '0')}:${String(m).padStart(2, '0')}`; };
+
+// ---------- cancel a class for one day ----------
+function openClassSheet(meetingId, courseId, date, root) {
+  const s = getStudy();
+  const course = s.courses.find((c) => c.id === courseId);
+  const meeting = course?.meetings?.find((m) => m.id === meetingId);
+  if (!course || !meeting) return;
+  const cancelled = isClassCancelled(s, meetingId, date);
+  const name = `${course.name}${meeting.kind === 'lab' ? ' lab' : ''}`;
+  const when = `${formatShort(date)}${meeting.start ? ` · ${timeRange(meeting)}` : ''}`;
+  const refresh = () => renderStudy(root);
+  const html = `
+    <p class="card__hint">${esc(name)}<br>${esc(when)}</p>
+    ${cancelled
+      ? `<p class="hand">Called off for this day.</p>
+         <button type="button" class="btn-sketch btn-sketch--go btn-sketch--big" data-uncancel>Put it back on</button>`
+      : '<button type="button" class="btn-sketch btn-sketch--go btn-sketch--big" data-cancel>Cancel just this day</button>'}
+    <button type="button" class="btn-plain" data-edit>Edit the course</button>
+    <p class="card__hint">This only changes ${esc(formatShort(date))}. For a whole break, use Settings → Holidays &amp; breaks.</p>`;
+  openSheet(cancelled ? 'Class is off' : 'Cancel this class', html, (sheet, close) => {
+    sheet.addEventListener('click', (e) => {
+      if (e.target.closest('[data-cancel]')) {
+        cancelClass(meetingId, date);
+        close();
+        refresh();
+        toast('Cancelled for the day.', { undo: () => { uncancelClass(meetingId, date); refresh(); } });
+        return;
+      }
+      if (e.target.closest('[data-uncancel]')) {
+        uncancelClass(meetingId, date);
+        close();
+        refresh();
+        toast('Back on the schedule.');
+        return;
+      }
+      if (e.target.closest('[data-edit]')) { close(); beginCourseSetup(courseId); }
+    });
+  });
+}
+
+// "I'm out of class": frees up the class happening now, or the next one today.
+function outOfClassNow(root) {
+  const s = getStudy();
+  const today = todayKey();
+  const now = nowHM();
+  const classes = dayItems(s, today).filter((i) => (i.kind === 'class' || i.kind === 'lab') && i.meeting && !i.cancelled && !i.holiday);
+  const endOf = (i) => i.end || addHour(i.start);
+  const target = classes.find((i) => i.start <= now && now < endOf(i)) || classes.find((i) => endOf(i) > now);
+  if (!target) return toast('No class left to clear today.');
+  cancelClass(target.meeting.id, today);
+  renderStudy(root);
+  const label = `${target.title}${target.kind === 'lab' ? ' lab' : ''}`;
+  toast(`Out of ${label}. Enjoy the free time.`, { undo: () => { uncancelClass(target.meeting.id, today); renderStudy(root); } });
+}
+
+function offDaysChipsHTML() {
+  const list = getStudy().offDays ?? [];
+  if (!list.length) return '<span class="card__hint">None yet.</span>';
+  return list.map((x) => `<span class="tape">${esc(x.label)} · ${x.from === x.to ? esc(formatShort(x.from)) : `${esc(formatShort(x.from))} – ${esc(formatShort(x.to))}`}<button type="button" data-off-remove="${esc(x.id)}" aria-label="Remove ${esc(x.label)}">✕</button></span>`).join('');
+}
 
 // ---------- add / edit a task ----------
 function checklistHTML(items) {
@@ -913,6 +1007,15 @@ async function openStudySettings() {
       </label>
     </div>
     ${sw('pip', `${esc(profile.frogName)} reacts to homework and exams`)}
+    <p class="field">Holidays &amp; breaks</p>
+    <p class="card__hint">No classes or labs on these days. Homework and exams still show.</p>
+    <div class="chip-row" data-off-list>${offDaysChipsHTML()}</div>
+    <div class="grid-2">
+      <label class="field">First day<input type="date" data-off="from"></label>
+      <label class="field">Last day<input type="date" data-off="to"></label>
+    </div>
+    <label class="field">Label<input data-off="label" maxlength="40" autocomplete="off" placeholder="Thanksgiving break"></label>
+    <button type="button" class="btn-sketch" data-off-add>+ add days off</button>
     <p class="card__hint">Changes save right away.</p>`;
 
   openSheet('Study settings', html, (sheet) => {
@@ -920,6 +1023,23 @@ async function openStudySettings() {
       const current = await getProfile();
       await saveProfile({ notify: { ...current.notify, study: { ...studyNotifyPrefs(current), ...patch } } });
     };
+    sheet.addEventListener('click', (e) => {
+      if (e.target.closest('[data-off-add]')) {
+        const val = (k) => sheet.querySelector(`[data-off="${k}"]`);
+        const from = val('from').value;
+        const to = val('to').value || from;
+        const label = val('label').value.trim() || 'Break';
+        if (!from) return toast('Pick the first day.');
+        if (to < from) return toast('The last day is before the first.');
+        addOffDay({ from, to, label });
+        ['from', 'to', 'label'].forEach((k) => { val(k).value = ''; });
+        sheet.querySelector('[data-off-list]').innerHTML = offDaysChipsHTML();
+        return undefined;
+      }
+      const rm = e.target.closest('[data-off-remove]');
+      if (rm) { removeOffDay(rm.dataset.offRemove); sheet.querySelector('[data-off-list]').innerHTML = offDaysChipsHTML(); }
+      return undefined;
+    });
     sheet.addEventListener('change', (e) => {
       const el = e.target;
       if (el.dataset.hours) {
@@ -957,7 +1077,7 @@ export function studyPeekHTML(today = todayKey()) {
   const s = getStudy();
   const st = studyStatus(s, today);
   const soon = st.open.filter((t) => t.due <= addDays(today, 3)).slice(0, 3);
-  const next = dayItems(s, today).find((i) => (i.kind === 'class' || i.kind === 'lab') && i.start >= nowHM());
+  const next = dayItems(s, today).find((i) => (i.kind === 'class' || i.kind === 'lab') && !i.cancelled && !i.holiday && i.start >= nowHM());
   const cards = totalDue(today);
   if (!soon.length && !next && !cards) return '';
   return `

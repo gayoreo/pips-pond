@@ -237,7 +237,7 @@ export async function renderCourse(root) {
 }
 
 // Opens the score sheet for a finished planner task (from "needs a score").
-export function scoreTask(course, task) {
+export function scoreTask(course, task, preset = {}) {
   if (!task) return;
   if (!gradingOf(course).categories.length) {
     saveGrading(course.id, { ...starterGrading('weighted'), scale: gradingOf(course).scale });
@@ -247,6 +247,7 @@ export function scoreTask(course, task) {
   openItemSheet(fresh, {
     name: task.title, taskId: task.id, catId: guessCategory(fresh, task),
     isFinal: task.type === 'exam' && /final/i.test(task.title),
+    ...preset,
   });
 }
 

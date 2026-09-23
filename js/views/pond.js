@@ -17,6 +17,7 @@ import { cloudEnabled, userNow } from '../data/supabase.js';
 import { studyOverride, getStudy, studyStatus, liveTasks } from '../data/study.js';
 import { reviewStreak, totalDue } from '../data/decks.js';
 import { studyPeekHTML } from './study.js';
+import { getWeather, campusOf, codeInfo } from '../core/weather.js';
 
 // One-time card nudging local-only users to make an account (for sync + friends + reminders).
 function signinNudgeHTML(profile) {
@@ -156,6 +157,27 @@ function phaseHTML(b, settings, name, stats, profile) {
   return '';
 }
 
+// Fills the little weather strip once the forecast comes back. Stays hidden if it can't be read.
+async function fillPondWeather(root, profile) {
+  const el = root.querySelector('#pond-weather');
+  if (!el) return;
+  const campus = campusOf(profile);
+  const w = await getWeather(campus);
+  if (!w || root.querySelector('#pond-weather') !== el) return; // gone or navigated away
+  const [label, icon] = codeInfo(w.code);
+  const bits = [
+    `feels ${w.feelsF}°`,
+    w.hiF !== null && w.loF !== null ? `H ${w.hiF}° L ${w.loF}°` : '',
+    w.precipProb >= 30 ? `${w.precipProb}% rain` : '',
+  ].filter(Boolean).join(' · ');
+  el.innerHTML = `
+    <span class="weather__now">${icon} ${w.tempF}°</span>
+    <span class="weather__label">${esc(label)}</span>
+    <span class="weather__meta">${esc(bits)}</span>
+    ${campus.name ? `<span class="weather__place">${esc(campus.name)}</span>` : ''}`;
+  el.hidden = false;
+}
+
 const LEAVES = Array.from({ length: 10 }, (_, i) =>
   `<span class="leaf" style="--x:${(i * 37) % 100}%;--d:${(i % 5) * 0.18}s;--r:${(i * 53) % 360}deg" aria-hidden="true"></span>`).join('');
 
@@ -200,6 +222,7 @@ export async function renderPond(root) {
     </header>
 
     <div class="pond-page__a">
+      <div class="weather" id="pond-weather" hidden></div>
       <section aria-label="${esc(name)}" class="pond-wrap">
         ${pondSceneHTML({ mood, name, outfit: outfitFor(today), button: true, extraClass: movingIn ? 'is-moving-in' : '', dancing, visitor })}
         ${movingIn ? `<div class="leaves" aria-hidden="true">${LEAVES}</div>` : ''}
@@ -268,6 +291,8 @@ export async function renderPond(root) {
     if (e.target.closest('[data-nudge-dismiss]')) return saveProfile({ signinNudgeSeen: true });
     if (e.target.closest('[data-new-semester]')) return beginNewSemester(nextSemesterDefaults(settings, entries));
   });
+
+  fillPondWeather(root, profile);
 
   // Re-render the pond when friend pings arrive (while it's the open page).
   if (!renderPond._pingWired) {

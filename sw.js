@@ -1,5 +1,5 @@
 // Bump VERSION whenever you add, rename or remove files.
-const VERSION = 'v12';
+const VERSION = 'v13';
 const CACHE = `pips-pond-${VERSION}`;
 const FONT_CACHE = 'pips-pond-fonts';
 const LIB_CACHE = 'pips-pond-libs';
@@ -8,7 +8,7 @@ const SHELL = [
   './', './index.html', './manifest.json',
   './css/tokens.css', './css/base.css', './css/components.css',
   './js/main.js', './js/router.js', './js/config.js',
-  './js/core/dates.js', './js/core/calc.js', './js/core/weights.js', './js/core/semester.js',
+  './js/core/dates.js', './js/core/calc.js', './js/core/weights.js', './js/core/semester.js', './js/core/weather.js',
   './js/data/db.js', './js/data/importExport.js', './js/data/supabase.js', './js/data/sync.js',
   './js/data/auth.js', './js/data/social.js', './js/data/push.js',
   './js/pip/frog.js', './js/pip/mood.js', './js/pip/lines.js',

@@ -15,6 +15,7 @@ import { getArchive } from '../data/db.js';
 import { getProfile, saveProfile, readAll } from '../data/db.js';
 import { pushStatus } from '../data/push.js';
 import { todayKey, addDays, dayOfWeek, startOfWeek, formatShort, formatHM, fromKey } from '../core/dates.js';
+import { campusOf } from '../core/weather.js';
 import { esc } from '../ui/dom.js';
 import { toast } from '../ui/toast.js';
 import { play } from '../ui/sound.js';
@@ -25,7 +26,7 @@ import { pendingShare, clearPendingShare } from '../data/share.js';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MODE_KEY = 'study:mode';
-const view = { course: 'all', showDone: false, week: null }; // remembered while the app is open
+const view = { course: 'all', showDone: false, week: null, selecting: false, selected: new Set() }; // remembered while the app is open
 const byDue = (a, b) => `${a.due}T${a.time || '99'}`.localeCompare(`${b.due}T${b.time || '99'}`);
 const getMode = () => { try { return sessionStorage.getItem(MODE_KEY) || 'planner'; } catch { return 'planner'; } };
 const setMode = (m) => { try { sessionStorage.setItem(MODE_KEY, m); } catch { /* ignore */ } };
@@ -45,6 +46,17 @@ function taskRow(t, courses, today) {
     total ? `${ticked}/${total}` : '',
     t.seriesId ? 'weekly' : '',
   ].filter(Boolean).join(' · ');
+  if (view.selecting) {
+    const on = view.selected.has(t.id);
+    return `
+    <li class="task task--${t.type}${t.done ? ' is-done' : ''}${on ? ' is-selected' : ''}" style="--course:${c?.color ?? 'var(--tape)'}">
+      <button type="button" class="task__pick" data-select-task="${esc(t.id)}" aria-pressed="${on}" aria-label="Select ${esc(t.title)}"></button>
+      <div class="task__body task__body--static">
+        <span class="task__title">${esc(t.title)}</span>
+        <span class="task__meta">${meta}</span>
+      </div>
+    </li>`;
+  }
   return `
     <li class="task task--${t.type}${t.done ? ' is-done' : ''}" style="--course:${c?.color ?? 'var(--tape)'}">
       <button type="button" class="task__check" data-done="${esc(t.id)}" aria-pressed="${t.done}"
@@ -119,10 +131,20 @@ function plannerHTML(s, today, profile) {
       </div>
     </section>`;
   }
+  const selBar = view.selecting ? `
+    <div class="sel-bar">
+      <span>${view.selected.size} selected</span>
+      <div class="row">
+        <button type="button" class="btn-plain" data-sel-cancel>cancel</button>
+        <button type="button" class="btn-sketch btn-sketch--small btn-sketch--danger" data-sel-delete${view.selected.size ? '' : ' disabled'}>Delete${view.selected.size ? ` ${view.selected.size}` : ''}</button>
+      </div>
+    </div>`
+    : ((open.length || done.length) ? '<div class="plan-tools"><button type="button" class="btn-plain" data-select-mode>Select to delete</button></div>' : '');
   return `
-    ${todayScheduleHTML(s, today)}
+    ${view.selecting ? '' : todayScheduleHTML(s, today)}
     ${chips}
-    ${nextExamLine(s, today)}
+    ${selBar}
+    ${view.selecting ? '' : nextExamLine(s, today)}
     ${groupHTML('Overdue', open.filter((t) => t.due < today), courses, today, 'plan-group--late')}
     ${groupHTML('Today', open.filter((t) => t.due === today), courses, today)}
     ${groupHTML('Tomorrow', open.filter((t) => t.due === tomorrow), courses, today)}
@@ -468,11 +490,37 @@ export async function renderStudy(root) {
     const chip = t.closest('[data-course]');
     if (chip) { view.course = chip.dataset.course; return renderStudy(root); }
     if (t.closest('[data-show-done]')) { view.showDone = !view.showDone; return renderStudy(root); }
+    if (t.closest('[data-select-mode]')) { view.selecting = true; view.selected = new Set(); return renderStudy(root); }
+    if (t.closest('[data-sel-cancel]')) { view.selecting = false; view.selected = new Set(); return renderStudy(root); }
+    const selTask = t.closest('[data-select-task]');
+    if (selTask) {
+      const id = selTask.dataset.selectTask;
+      if (view.selected.has(id)) view.selected.delete(id); else view.selected.add(id);
+      return renderStudy(root);
+    }
+    if (t.closest('[data-sel-delete]')) return bulkDelete(root);
     return undefined;
   });
 }
 
+// Delete every selected task at once, with a single undo that brings them all back.
+function bulkDelete(root) {
+  const ids = [...view.selected];
+  if (!ids.length) return undefined;
+  if (!confirm(`Delete ${ids.length} ${ids.length === 1 ? 'item' : 'items'}? Finished ones included.`)) return undefined;
+  const s = getStudy();
+  const copies = ids.map((id) => s.tasks.find((x) => x.id === id)).filter(Boolean).map((t) => ({ ...t }));
+  for (const id of ids) deleteTask(id);
+  view.selecting = false;
+  view.selected = new Set();
+  renderStudy(root);
+  return toast(`Deleted ${copies.length} ${copies.length === 1 ? 'item' : 'items'}.`, {
+    undo: () => { for (const c of copies) { if (c.seriesId) restoreTask(c.id); else restoreTaskObject(c); } renderStudy(root); },
+  });
+}
+
 const addHour = (hm) => { const [h, m] = hm.split(':').map(Number); return `${String(Math.min(h + 1, 23)).padStart(2, '0')}:${String(m).padStart(2, '0')}`; };
+const stripNumLabel = (t) => String(t || '').replace(/\s+\d+\s*$/, '').trim() || 'Item';
 
 // ---------- cancel a class for one day ----------
 function openClassSheet(meetingId, courseId, date, root) {
@@ -602,6 +650,7 @@ export function openTaskSheet(task, after = () => {}) {
         ${DAYS.map((name, i) => `<label class="daychip"><input type="checkbox" name="days" value="${i}"><span>${name}</span></label>`).join('')}
       </fieldset>
       <label class="field">Until<input type="date" name="until" value="${esc(until)}"></label>
+      <label class="row"><span>Number them (Quiz 1, Quiz 2 …)</span><input type="checkbox" class="switch" name="autonum"></label>
     </div>`}
     <section class="checklist-edit">
       <p class="field">Checklist</p>
@@ -747,10 +796,11 @@ export function openTaskSheet(task, after = () => {}) {
         const untilDay = f('until').value;
         if (!days.length) return toast('Pick which days it repeats.');
         if (untilDay && untilDay < due) return toast('The end date is before the first one.');
-        addSeries({ title, type: d.type, courseId, time, days, start: due, until: untilDay, checklist: d.checklist.map((i) => i.text) });
+        const autoNumber = Boolean(f('autonum')?.checked);
+        addSeries({ title, type: d.type, courseId, time, days, start: due, until: untilDay, checklist: d.checklist.map((i) => i.text), autoNumber });
         close();
         play('pop');
-        return toast(`Added. ${title} repeats every ${days.map((n) => DAYS[n]).join(', ')}.`);
+        return toast(`Added. ${autoNumber ? `${stripNumLabel(title)} 1, 2, 3…` : title} repeats every ${days.map((n) => DAYS[n]).join(', ')}.`);
       }
       if (editing) {
         const allDone = fields.checklist.length > 0 && fields.checklist.every((i) => i.done);
@@ -977,6 +1027,7 @@ async function openStudySettings() {
   const profile = await getProfile();
   const p = studyNotifyPrefs(profile);
   const hours = studyHours(profile);
+  const camp = campusOf(profile);
   const push = await pushStatus();
   const note = push === 'on'
     ? 'Notifications are on for this device.'
@@ -1007,6 +1058,15 @@ async function openStudySettings() {
       </label>
     </div>
     ${sw('pip', `${esc(profile.frogName)} reacts to homework and exams`)}
+    <p class="field">Weather</p>
+    <label class="row"><span>Morning “dress for class” nudge</span><input type="checkbox" class="switch" data-weather="on"${(profile?.notify?.weather?.on !== false) ? ' checked' : ''}></label>
+    <p class="card__hint">A heads-up before your first class when it’ll be cold or wet during class hours. Needs reminders on.</p>
+    <div class="grid-2">
+      <label class="field">Campus latitude<input inputmode="decimal" data-campus="lat" value="${esc(String(camp.lat))}"></label>
+      <label class="field">Campus longitude<input inputmode="decimal" data-campus="lon" value="${esc(String(camp.lon))}"></label>
+    </div>
+    <label class="field">Place name<input data-campus="name" maxlength="40" autocomplete="off" value="${esc(camp.name)}" placeholder="Burlington, VT"></label>
+    <p class="card__hint">The Pond weather and the nudge both read this spot.</p>
     <p class="field">Holidays &amp; breaks</p>
     <p class="card__hint">No classes or labs on these days. Homework and exams still show.</p>
     <div class="chip-row" data-off-list>${offDaysChipsHTML()}</div>
@@ -1022,6 +1082,14 @@ async function openStudySettings() {
     const save = async (patch) => {
       const current = await getProfile();
       await saveProfile({ notify: { ...current.notify, study: { ...studyNotifyPrefs(current), ...patch } } });
+    };
+    const saveWeather = async (patch) => {
+      const current = await getProfile();
+      await saveProfile({ notify: { ...current.notify, weather: { on: true, ...(current.notify?.weather ?? {}), ...patch } } });
+    };
+    const saveCampus = async (patch) => {
+      const current = await getProfile();
+      await saveProfile({ campus: { ...campusOf(current), ...patch } });
     };
     sheet.addEventListener('click', (e) => {
       if (e.target.closest('[data-off-add]')) {
@@ -1047,6 +1115,15 @@ async function openStudySettings() {
         const to = sheet.querySelector('[data-hours="to"]').value || '22:00';
         if (to <= from) { toast('The day has to end after it starts.'); return; }
         getProfile().then((cur) => saveProfile({ studyHours: { ...studyHours(cur), from, to } }));
+        return;
+      }
+      if (el.dataset.weather) { saveWeather({ on: el.checked }); return; }
+      if (el.dataset.campus) {
+        const g = (k) => sheet.querySelector(`[data-campus="${k}"]`).value.trim();
+        const lat = Number(g('lat'));
+        const lon = Number(g('lon'));
+        if (g('lat') !== '' && g('lon') !== '' && !(Number.isFinite(lat) && Number.isFinite(lon))) { toast('Latitude and longitude need to be numbers.'); return; }
+        saveCampus({ lat, lon, name: g('name') });
         return;
       }
       if (el.dataset.pref) {

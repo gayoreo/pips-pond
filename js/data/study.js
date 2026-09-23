@@ -273,7 +273,7 @@ export const updateTask = (id, patch) => change((s) => {
 export const deleteTask = (id) => change((s) => {
   const t = s.tasks.find((x) => x.id === id);
   if (!t) return;
-  if (t.seriesId) Object.assign(t, { deleted: true });
+  if (t.seriesId) { Object.assign(t, { deleted: true }); renumberSeries(s, t.seriesId); }
   else s.tasks = s.tasks.filter((x) => x.id !== id);
 });
 
@@ -282,6 +282,7 @@ export const toggleDone = (id) => change((s) => {
   if (!t) return false;
   t.done = !t.done;
   t.doneAt = t.done ? new Date().toISOString() : '';
+  if (t.seriesId) renumberSeries(s, t.seriesId);
   return t.done;
 });
 
@@ -294,6 +295,7 @@ export const toggleCheck = (taskId, itemId) => change((s) => {
   const allDone = t.checklist.length > 0 && t.checklist.every((i) => i.done);
   if (allDone && !t.done) { t.done = true; t.doneAt = new Date().toISOString(); }
   if (!item.done && t.done) { t.done = false; t.doneAt = ''; }
+  if (t.seriesId) renumberSeries(s, t.seriesId);
   return allDone;
 });
 
@@ -301,6 +303,26 @@ export const toggleCheck = (taskId, itemId) => change((s) => {
 // A repeat is filled in all the way to its end date, so "every Friday until December" really is
 // every Friday. With no end date it runs to the end of the semester, or four months out.
 const MAX_COPIES = 300;
+
+// The stem of an auto-numbered title, with any trailing number taken off ("Quiz 3" -> "Quiz").
+const stripNum = (t) => String(t || '').replace(/\s+\d+\s*$/, '').trim();
+
+// For an auto-numbered repeat: number the copies in date order (Quiz 1, Quiz 2 ...). Finished
+// copies keep the number they were given; only not-yet-done ones renumber, taking the lowest
+// free numbers, so finishing or deleting one shifts the rest without relabeling your history.
+function renumberSeries(s, seriesId) {
+  const r = s.series.find((x) => x.id === seriesId);
+  if (!r || !r.autoNumber) return;
+  const base = stripNum(r.title) || 'Item';
+  const copies = s.tasks.filter((t) => t.seriesId === seriesId && !t.deleted).sort((a, b) => a.due.localeCompare(b.due));
+  const taken = new Set(copies.filter((t) => t.done && Number.isInteger(t.num)).map((t) => t.num));
+  let counter = 0;
+  const nextFree = () => { do { counter += 1; } while (taken.has(counter)); return counter; };
+  for (const t of copies) {
+    if (!(t.done && Number.isInteger(t.num))) t.num = nextFree();
+    t.title = `${base} ${t.num}`;
+  }
+}
 
 function fillThrough(r, today) {
   const cap = addDays(today, 400);
@@ -330,9 +352,11 @@ function fillSeries(s, r, today) {
 }
 
 export const addSeries = (r) => change((s) => {
-  const series = { id: newId(), courseId: '', type: 'homework', time: '', checklist: [], until: '', ...r };
+  const series = { id: newId(), courseId: '', type: 'homework', time: '', checklist: [], until: '', autoNumber: false, ...r };
+  if (series.autoNumber) series.title = stripNum(series.title) || 'Item';
   s.series.push(series);
   fillSeries(s, series, todayKey());
+  renumberSeries(s, series.id);
   return series;
 });
 
@@ -353,7 +377,9 @@ export const restoreBlockObject = (block) => change((s) => { if (block && !s.blo
 // Brings back a skipped copy of a weekly repeat.
 export const restoreTask = (id) => change((s) => {
   const t = s.tasks.find((x) => x.id === id);
-  if (t) delete t.deleted;
+  if (!t) return;
+  delete t.deleted;
+  if (t.seriesId) renumberSeries(s, t.seriesId);
 });
 
 // Changes a weekly repeat and its unfinished copies from `fromDue` on. Finished copies are left alone.
@@ -368,6 +394,7 @@ export const updateSeries = (seriesId, patch, fromDue) => change((s) => {
     for (const k of ['title', 'type', 'courseId', 'time', 'end', 'notes']) if (k in patch) t[k] = patch[k];
     if (patch.checklist) t.checklist = patch.checklist.map((i, n) => ({ id: `${t.id}:${n}`, text: i.text, done: false }));
   }
+  if (r?.autoNumber) renumberSeries(s, seriesId); // numbered titles win over a plain title edit
 });
 
 // Fills in any repeat that isn't complete yet. Only saves when something new was added.
@@ -376,7 +403,7 @@ export function ensureSeries() {
   const s = norm(readAll().study);
   const behind = s.series.some((r) => (r.filledTo || '') < fillThrough(r, today));
   if (!behind) return;
-  change((st) => { for (const r of st.series) fillSeries(st, r, today); }, false);
+  change((st) => { for (const r of st.series) { fillSeries(st, r, today); renumberSeries(st, r.id); } }, false);
 }
 
 // ---------- class and lab times ----------
@@ -623,6 +650,21 @@ export function studyForPush(data) {
       .map((t) => ({ id: t.id, title: t.title, type: t.type, course: names[t.courseId] || '', due: t.due, time: t.time || '' })),
     cards: cardsDueMap(data),
   };
+}
+
+// The weekly class and lab windows the reminder server needs to tell if there's class today
+// (for the morning dress-for-the-weather nudge).
+export function classHoursForPush(data) {
+  const s = forSemester(norm(data.study), data);
+  const out = [];
+  for (const c of s.courses) {
+    for (const m of c.meetings ?? []) {
+      if ((m.kind === 'class' || m.kind === 'lab') && m.days?.length && m.start) {
+        out.push({ days: m.days, start: m.start, end: m.end || '' });
+      }
+    }
+  }
+  return out.slice(0, 40);
 }
 
 // When school needs you more than the meal budget does, Pip's mood and line follow school.

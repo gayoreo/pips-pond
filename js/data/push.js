@@ -8,7 +8,8 @@ import { afterSync } from './sync.js';
 import { onSignOut } from './auth.js';
 import { budget } from '../core/calc.js';
 import { todayKey } from '../core/dates.js';
-import { studyForPush } from './study.js';
+import { studyForPush, classHoursForPush } from './study.js';
+import { campusOf } from '../core/weather.js';
 
 const PUBLISHED = 'pips-pond:notify-published';
 const LOG_TYPES = new Set(['swipe', 'points', 'exchange', 'guest']);
@@ -94,6 +95,8 @@ function notifyState(data) {
     semester: s ? { name: s.semesterName, start: s.start, end: s.end, daysOff: s.daysOff ?? [] } : null,
     snapshot,
     study: studyForPush(data),
+    campus: campusOf(profile),
+    class_hours: classHoursForPush(data),
   };
 }
 

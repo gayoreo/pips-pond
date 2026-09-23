@@ -85,8 +85,11 @@ type Row = {
   prefs: {
     nudge?: boolean; nudgeTime?: string; pace?: boolean; semesterEnd?: boolean; frogName?: string; nickname?: string;
     study?: Record<string, unknown>;
+    weather?: { on?: boolean };
   };
   study?: { tasks?: StudyTask[]; cards?: Record<string, number> } | null;
+  campus?: { lat: number; lon: number; name?: string } | null;
+  class_hours?: { days: number[]; start: string; end: string }[] | null;
   semester: { name: string; start: string; end: string; daysOff: { from: string; to: string }[] } | null;
   snapshot: {
     weekStart: string; lastLogDay: string; pointsLeftWeek: number; swipesLeftWeek: number;
@@ -96,11 +99,12 @@ type Row = {
 };
 
 // Which reminders are due for one person right now (and what to remember so each goes out once).
-function due(row: Row): Due[] {
+async function due(row: Row): Promise<Due[]> {
   const out: Due[] = [];
   const { prefs, semester: sem, snapshot: snap, sent } = row;
   const { date, hm } = localNow(row.tz);
   out.push(...studyDue(row, date, hm));
+  out.push(...await weatherDue(row, date, hm));
   if (!sem || !snap) return out;
   const frog = prefs.frogName || 'Pip';
   const inSemester = date >= sem.start && date <= sem.end;
@@ -164,6 +168,71 @@ function due(row: Row): Due[] {
     }
   }
   return out;
+}
+
+// ---------- morning "dress for class" nudge ----------
+const SNOW_CODES = [71, 73, 75, 77, 85, 86];
+const RAIN_CODES = [51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82, 95, 96, 99];
+const COLD_F = 45; // feels-like at or below this during class = grab a coat
+
+async function weatherDue(row: Row, date: string, hm: string): Promise<Due[]> {
+  const p = row.prefs?.weather;
+  if (p?.on === false) return []; // default on
+  const sent = row.sent ?? {};
+  if (sent.weather === date) return [];
+  const at = '06:30';
+  if (!(hm >= at && hm < addHours(at, 4))) return []; // only look in the early-morning window
+  const sem = row.semester;
+  if (sem && (date < sem.start || date > sem.end)) return [];
+  if (sem && (sem.daysOff ?? []).some((d) => date >= d.from && date <= d.to)) return [];
+  const campus = row.campus;
+  if (!campus || !Number.isFinite(campus.lat) || !Number.isFinite(campus.lon)) return [];
+
+  const dow = new Date(`${date}T00:00:00Z`).getUTCDay();
+  const todays = (row.class_hours ?? []).filter((c) => (c.days ?? []).includes(dow) && c.start);
+  if (!todays.length) return [];
+  const firstStart = todays.reduce((m, c) => (c.start < m ? c.start : m), '23:59');
+  const lastEnd = todays.reduce((m, c) => { const e = c.end || c.start; return e > m ? e : m; }, '00:00');
+  if (hm >= firstStart) return []; // only before the first class
+
+  let data: { hourly?: Record<string, unknown[]> } = {};
+  try {
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${campus.lat}&longitude=${campus.lon}`
+      + '&hourly=temperature_2m,apparent_temperature,precipitation_probability,weather_code'
+      + `&temperature_unit=fahrenheit&precipitation_unit=inch&timezone=${encodeURIComponent(row.tz)}&forecast_days=1`;
+    const r = await fetch(url);
+    if (!r.ok) return [];
+    data = await r.json();
+  } catch { return []; }
+
+  const H = data.hourly ?? {};
+  const times = (H.time ?? []) as string[];
+  let minFeel = 999;
+  let maxPop = 0;
+  let rain = false;
+  let snow = false;
+  for (let i = 0; i < times.length; i++) {
+    const hhmm = String(times[i]).slice(11, 16);
+    if (hhmm < firstStart || hhmm > lastEnd) continue;
+    minFeel = Math.min(minFeel, Number(H.apparent_temperature?.[i] ?? 999));
+    maxPop = Math.max(maxPop, Number(H.precipitation_probability?.[i] ?? 0));
+    const wc = Number(H.weather_code?.[i] ?? 0);
+    if (SNOW_CODES.includes(wc)) snow = true;
+    if (RAIN_CODES.includes(wc)) rain = true;
+  }
+  if (minFeel === 999) return [];
+  const cold = minFeel <= COLD_F;
+  const wet = maxPop >= 50 || rain || snow;
+  if (!cold && !wet) return [];
+
+  const frog = row.prefs?.frogName || 'Pip';
+  const span = `${time12(firstStart)}–${time12(lastEnd)}`;
+  const feel = Math.round(minFeel);
+  let body: string;
+  if (wet && cold) body = `${snow ? 'Snow' : 'Rain'} and about ${feel}° during class (${span}). Grab a coat and an umbrella.`;
+  else if (wet) body = `${snow ? 'Snow' : 'Rain'} likely during class (${span}). Take an umbrella.`;
+  else body = `It feels about ${feel}° during class (${span}). Bundle up.`;
+  return [{ msg: { title: `${frog}: dress for today`, body, tag: 'weather' }, mark: { weather: date } }];
 }
 
 // ---------- study reminders ----------
@@ -270,7 +339,7 @@ async function runCron() {
   for (let i = 0; i < users.length; i += 200) {
     const { data: rows } = await admin.from('notify_state').select('*').in('user_id', users.slice(i, i + 200));
     for (const row of (rows ?? []) as Row[]) {
-      const list = due(row);
+      const list = await due(row);
       if (!list.length) continue;
       // Mark first so a slow run can't send the same reminder twice.
       await admin.from('notify_state').update({ sent: mergeSent(row.sent, list, row) }).eq('user_id', row.user_id);

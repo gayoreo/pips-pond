@@ -1,4 +1,4 @@
-// Campus bus (UVM CATS). Live data comes from UVM's Peak Transit API via Supabase Edge Function proxy.
+// Campus bus (UVM CATS). Live data comes from Peak Transit API via Supabase Edge Function proxy.
 import { SUPABASE_URL } from '../config.js';
 
 export const DEFAULT_WALK = 5;
@@ -8,17 +8,24 @@ const PROXY_BASE = `${SUPABASE_URL}/functions/v1/bus`;
 
 /**
  * Helper to call the Supabase Edge Function proxy.
- * Falls back to local proxy endpoints if remote Supabase function is unreachable.
+ * Tries local relative proxy if remote host is offline or not configured.
  */
 async function callProxy(path = '', params = {}) {
-  const query = new URLSearchParams(params).toString();
+  let cleanPath = path ? path.replace(/^\/+/, '') : '';
+  const searchParams = new URLSearchParams(params);
+  if (cleanPath.includes('?')) {
+    const [p, q] = cleanPath.split('?');
+    cleanPath = p;
+    new URLSearchParams(q).forEach((v, k) => searchParams.set(k, v));
+  }
+  const query = searchParams.toString();
   const queryString = query ? `?${query}` : '';
-  const cleanPath = path ? path.replace(/^\/+/, '') : '';
 
+  const baseOrigin = typeof location !== 'undefined' && location.origin ? location.origin : 'http://localhost:3000';
   const urls = [
+    `${baseOrigin}/functions/v1/bus${cleanPath ? `/${cleanPath}` : ''}${queryString}`,
     `${PROXY_BASE}${cleanPath ? `/${cleanPath}` : ''}${queryString}`,
-    `/functions/v1/bus${cleanPath ? `/${cleanPath}` : ''}${queryString}`,
-    `/api/bus?endpoint=/${cleanPath}${query ? `&${query}` : ''}`,
+    `${baseOrigin}/api/bus?endpoint=/${cleanPath}${query ? `&${query}` : ''}`,
   ];
 
   for (const url of urls) {
@@ -28,7 +35,7 @@ async function callProxy(path = '', params = {}) {
         return await res.json();
       }
     } catch {
-      // Continue to next fallback URL
+      // Continue to next fallback
     }
   }
 
@@ -37,9 +44,7 @@ async function callProxy(path = '', params = {}) {
 
 /**
  * Normalizes building or place names into uniform dictionary keys
- * (e.g. "Davis Center" -> "daviscenter", "Votey Hall 205" -> "voteyhall205")
- * @param {string} name
- * @returns {string}
+ * (e.g. "Davis Center" -> "daviscenter")
  */
 export function placeKey(name) {
   if (!name) return '';
@@ -51,23 +56,19 @@ export function placeKey(name) {
 
 /**
  * Estimates walking time in minutes based on distance.
- * Handles distance in meters or kilometers.
- * Standard campus walking pace: ~80 meters per minute (~4.8 km/h or 3 mph).
- * @param {number} distance
- * @returns {number}
+ * Campus walking speed: ~80 meters per minute.
  */
 export function walkMinutes(distance) {
   if (!distance || distance <= 0) return 0;
-  // If distance is very small (< 30), assume it's in kilometers and convert to meters
   const meters = distance < 30 ? distance * 1000 : distance;
   return Math.max(1, Math.round(meters / 80));
 }
 
 /**
- * Haversine formula to compute distance in meters between two lat/lon coordinates
+ * Great-circle distance between two GPS coordinates
  */
 function haversineMeters(lat1, lon1, lat2, lon2) {
-  const R = 6371000; // Earth radius in meters
+  const R = 6371000;
   const toRad = (deg) => (deg * Math.PI) / 180;
   const dLat = toRad(lat2 - lat1);
   const dLon = toRad(lon2 - lon1);
@@ -80,12 +81,7 @@ function haversineMeters(lat1, lon1, lat2, lon2) {
 }
 
 /**
- * Finds nearest bus stops to a given coordinate using Haversine formula.
- * Returns stops sorted by walking distance with stopId and walk (minutes) attached.
- * @param {Array} stops
- * @param {{ lat: number, lon?: number, lng?: number }} coord
- * @param {number} count
- * @returns {Array}
+ * Finds nearest bus stops to a given coordinate using Haversine formula
  */
 export function nearestStops(stops = [], coord = {}, count = 3) {
   if (!Array.isArray(stops) || !coord) return [];
@@ -113,30 +109,21 @@ export function nearestStops(stops = [], coord = {}, count = 3) {
 }
 
 /**
- * Fetches all routes, stops, and live ETAs from Supabase proxy.
- * Passes query parameters forcing the Peak Transit v5 API.
- * Returns { ok: true, at: Date.now(), stops, routes }
- * @returns {Promise<{ ok: boolean, at: number, stops: Array, routes: Array, error?: string }>}
+ * Fetches all routes, stops, and live ETAs.
+ * Exclusively uses Peak Transit v5 via proxy.
  */
 export async function loadBus() {
   try {
-    // 1. Request unified feed with v5 query parameter
-    const feed = await callProxy('feed?v5=1');
+    const feed = await callProxy('feed');
     if (feed && feed.ok && Array.isArray(feed.stops) && Array.isArray(feed.routes)) {
       return feed;
     }
 
-    // Secondary proxy URL format
-    const altFeed = await callProxy('', { feed: '1', v5: '1' });
-    if (altFeed && altFeed.ok && Array.isArray(altFeed.stops) && Array.isArray(altFeed.routes)) {
-      return altFeed;
-    }
-
-    // 2. Client-side fallback: assemble routes, stops, and predictions
+    // Assemble via individual endpoints if unified feed is not available
     const [routes, stops, preds] = await Promise.all([
-      fetchRoutes({ v5: '1' }),
-      fetchStops(null, { v5: '1' }),
-      fetchPredictions(null, { v5: '1' }),
+      fetchRoutes(),
+      fetchStops(),
+      fetchPredictions(),
     ]);
 
     const stopsMap = new Map();
@@ -181,21 +168,41 @@ export async function loadBus() {
 }
 
 /**
- * Plans A-to-B transit trips from origin stop candidates to destination stops.
- * Checks loop direction to ensure the destination stop comes after origin.
+ * A-to-B Trip Planning:
+ * Determines which buses travel from origin stop to destination stop in that specific direction.
+ * UVM buses run specific loops, so we check the loop sequence of stops.
  *
  * @param {{ stops: Array, routes: Array }} feed
- * @param {{ from: Array<{ stopId: string|number, walk?: number }>, to: Array<string|number> }} options
- * @returns {Array} List of possible trips sorted by arrival time
+ * @param {{ from: string|number|Array, to: string|number|Array }} options
+ * @returns {Array} List of possible trips calculated with leaveIn, busIn, arriveIn, boardStop, alightStop
  */
-export function planTrip(feed, { from = [], to = [] } = {}) {
+export function planTrip(feed, { from, to } = {}) {
   if (!feed || !Array.isArray(feed.routes) || !Array.isArray(feed.stops)) {
     return [];
   }
 
-  const fromList = Array.isArray(from) ? from : [from];
+  // Normalize inputs (handles arrays of stopIds or stop objects, or single strings)
+  const fromList = (Array.isArray(from) ? from : [from])
+    .filter(Boolean)
+    .map((item) => {
+      if (typeof item === 'object' && item !== null) {
+        return {
+          stopId: String(item.stopId ?? item.id ?? item.stopID ?? ''),
+          walk: Number(item.walk ?? item.walkMinutes ?? DEFAULT_WALK),
+        };
+      }
+      return { stopId: String(item), walk: DEFAULT_WALK };
+    })
+    .filter((x) => x.stopId);
+
   const toList = (Array.isArray(to) ? to : [to])
-    .map((item) => String(item?.stopId ?? item?.id ?? item))
+    .filter(Boolean)
+    .map((item) => {
+      if (typeof item === 'object' && item !== null) {
+        return String(item.stopId ?? item.id ?? item.stopID ?? '');
+      }
+      return String(item);
+    })
     .filter(Boolean);
 
   if (fromList.length === 0 || toList.length === 0) {
@@ -204,14 +211,15 @@ export function planTrip(feed, { from = [], to = [] } = {}) {
 
   const stopsMap = new Map();
   for (const s of feed.stops) {
-    stopsMap.set(String(s.id ?? s.stopId), s);
+    stopsMap.set(String(s.id ?? s.stopId ?? s.stopID), s);
   }
 
   const trips = [];
+  const now = Date.now();
 
   for (const fromCandidate of fromList) {
-    const originStopId = String(fromCandidate.stopId ?? fromCandidate.id ?? fromCandidate);
-    const walk = Number(fromCandidate.walk ?? fromCandidate.walkMinutes ?? DEFAULT_WALK);
+    const originStopId = fromCandidate.stopId;
+    const walk = fromCandidate.walk;
     const boardStop = stopsMap.get(originStopId);
     if (!boardStop) continue;
 
@@ -224,7 +232,7 @@ export function planTrip(feed, { from = [], to = [] } = {}) {
         const routeStops = (route.stops || []).map(String);
         if (routeStops.length === 0) continue;
 
-        // Find all occurrences of origin and destination stops along this route
+        // Find positions of origin and destination stops on this route
         const fromIndices = [];
         const toIndices = [];
         routeStops.forEach((id, idx) => {
@@ -232,6 +240,7 @@ export function planTrip(feed, { from = [], to = [] } = {}) {
           if (id === destStopId) toIndices.push(idx);
         });
 
+        // If route does not visit both stops, skip
         if (fromIndices.length === 0 || toIndices.length === 0) continue;
 
         // Find minimum forward loop distance from origin to destination
@@ -244,7 +253,7 @@ export function planTrip(feed, { from = [], to = [] } = {}) {
               const d = di - oi;
               if (d < minDist) minDist = d;
             } else if (di < oi) {
-              // Loop wrap-around
+              // Wrap-around in the loop
               const d = (N - oi) + di;
               if (d < minDist) minDist = d;
             }
@@ -258,7 +267,7 @@ export function planTrip(feed, { from = [], to = [] } = {}) {
         // Estimated transit ride time: ~1.8 mins per stop, minimum 2 mins
         const rideMinutes = Math.max(2, Math.round(minDist * 1.8));
 
-        // Gather live arrival ETAs for this route at the boarding stop
+        // Get live arrival predictions for this route at the boarding stop
         let etas = [];
         if (route.etas && route.etas[originStopId]) {
           etas = route.etas[originStopId];
@@ -266,10 +275,11 @@ export function planTrip(feed, { from = [], to = [] } = {}) {
           etas = boardStop.etas.filter((e) => String(e.routeId) === String(route.id));
         }
 
-        for (const eta of etas) {
-          const busIn = Math.max(0, Math.round(Number(eta.min ?? 0)));
+        for (const etaItem of etas) {
+          const busIn = Math.max(0, Math.round(Number(etaItem.min ?? 0)));
           const leaveIn = busIn - walk;
           const arriveIn = busIn + rideMinutes;
+          const arriveTime = new Date(now + arriveIn * 60000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
           trips.push({
             route: {
@@ -279,8 +289,9 @@ export function planTrip(feed, { from = [], to = [] } = {}) {
             },
             routeName: route.name,
             routeColor: route.color || 'var(--green-fill)',
-            vehicle: String(eta.vehicle || ''),
-            eta: String(eta.eta || ''),
+            vehicle: String(etaItem.vehicle || ''),
+            eta: String(etaItem.eta || `${busIn}m`),
+            arriveEta: arriveTime,
             busIn,
             leaveIn,
             arriveIn,
@@ -295,7 +306,7 @@ export function planTrip(feed, { from = [], to = [] } = {}) {
     }
   }
 
-  // Sort trips: first by earliest arrival, then by earliest departure
+  // Sort by earliest arrival time, then by earliest departure
   return trips.sort((a, b) => {
     if (a.arriveIn !== b.arriveIn) return a.arriveIn - b.arriveIn;
     return a.leaveIn - b.leaveIn;
@@ -303,16 +314,13 @@ export function planTrip(feed, { from = [], to = [] } = {}) {
 }
 
 /**
- * Returns the best trip and a secondary backup option within BACKUP_WINDOW minutes.
- * @param {Array} trips
- * @returns {{ best: Object|null, backup: Object|null }}
+ * Returns the best trip and a secondary backup option within BACKUP_WINDOW minutes
  */
 export function pickTwo(trips = []) {
   if (!Array.isArray(trips) || trips.length === 0) {
     return { best: null, backup: null };
   }
 
-  // Prefer trips where user can make it (leaveIn >= -1 gives a brisk walk allowance)
   const viable = trips.filter((t) => t.leaveIn >= -1);
   const candidates = viable.length > 0 ? viable : trips;
 
@@ -345,7 +353,7 @@ export function pickTwo(trips = []) {
 }
 
 // -------------------------------------------------------------
-// Backwards-compatible exports for existing view & test code
+// Direct endpoints
 // -------------------------------------------------------------
 
 export async function fetchRoutes(params = {}) {

@@ -1,287 +1,359 @@
-// Bus view: drill down from active Routes -> Stops -> live Arrivals using Peak Transit API
-import { fetchRoutes, fetchStops, fetchPredictions } from '../data/bus.js';
+// Campus Bus Tracker: A-to-B trip planner for UVM CATS shuttles.
+import { loadBus, planTrip, pickTwo } from '../data/bus.js';
 import { esc } from '../ui/dom.js';
 
+const STORAGE_FROM = 'pips:bus:from';
+const STORAGE_TO = 'pips:bus:to';
+
 const state = {
-  step: 'routes',        // 'routes' | 'stops' | 'arrivals'
-  routes: null,
-  selectedRoute: null,
-  stops: null,
-  selectedStop: null,
-  predictions: null,
+  feed: null,
+  startStopId: '',
+  endStopId: '',
   loading: false,
-  loadingText: '',
   error: null,
   timer: null,
 };
 
 let currentRoot = null;
 
+// Popular campus destination shortcuts
+const POPULAR_STOPS = [
+  { name: 'Davis Center', match: /davis/i },
+  { name: 'Redstone Apts', match: /redstone.*apt/i },
+  { name: 'Coolidge Hall', match: /coolidge/i },
+  { name: 'Billings Library', match: /billings/i },
+  { name: 'Waterman', match: /waterman/i },
+  { name: 'Patrick Gym / PFG', match: /pfg|athletic|patrick/i },
+];
+
+function getSavedStops(stops = []) {
+  let fromId = '';
+  let toId = '';
+
+  try {
+    fromId = sessionStorage.getItem(STORAGE_FROM) || localStorage.getItem(STORAGE_FROM) || '';
+    toId = sessionStorage.getItem(STORAGE_TO) || localStorage.getItem(STORAGE_TO) || '';
+  } catch {
+    // Ignore storage restrictions
+  }
+
+  const validIds = new Set(stops.map((s) => String(s.id)));
+
+  if (!fromId || !validIds.has(fromId)) {
+    // Default origin: e.g. Coolidge or Redstone or first stop
+    const defaultFrom = stops.find((s) => /coolidge|redstone/i.test(s.name)) || stops[0];
+    fromId = defaultFrom ? String(defaultFrom.id) : '';
+  }
+
+  if (!toId || !validIds.has(toId) || toId === fromId) {
+    // Default destination: Davis Center or Billings Library or second stop
+    const defaultTo = stops.find((s) => /davis|billings|waterman/i.test(s.name) && String(s.id) !== fromId) ||
+      stops.find((s) => String(s.id) !== fromId) || stops[1] || stops[0];
+    toId = defaultTo ? String(defaultTo.id) : '';
+  }
+
+  return { fromId, toId };
+}
+
+function saveStops(fromId, toId) {
+  try {
+    if (fromId) {
+      sessionStorage.setItem(STORAGE_FROM, fromId);
+      localStorage.setItem(STORAGE_FROM, fromId);
+    }
+    if (toId) {
+      sessionStorage.setItem(STORAGE_TO, toId);
+      localStorage.setItem(STORAGE_TO, toId);
+    }
+  } catch {
+    // Ignore storage restrictions
+  }
+}
+
 function renderUI() {
   if (!currentRoot) return;
-  const { step, routes, selectedRoute, stops, selectedStop, predictions, loading, loadingText, error } = state;
 
-  let bodyHTML = '';
+  const { feed, startStopId, endStopId, loading, error } = state;
+  const stops = feed?.stops || [];
+  const startStop = stops.find((s) => String(s.id) === String(startStopId));
+  const endStop = stops.find((s) => String(s.id) === String(endStopId));
 
-  if (step === 'routes') {
-    bodyHTML = `
-      <p class="hand">Select a Route</p>
-      ${loading ? `<p class="card__hint">${esc(loadingText || 'Loading active routes…')}</p>` : ''}
-      ${error ? `
-        <section class="card bus-result">
-          <p class="hand">Couldn’t load routes.</p>
-          <p class="card__hint">${esc(error)}</p>
-          <button type="button" class="btn-sketch btn-sketch--go" data-action="retry-routes">Try again</button>
-        </section>
-      ` : ''}
-      ${!loading && !error && routes && routes.length === 0 ? `
-        <section class="card bus-result">
-          <p class="hand">No shuttles currently running.</p>
-          <p class="card__hint">No active routes found. Shuttles may be off-duty or out of service right now.</p>
-          <button type="button" class="btn-sketch" data-action="retry-routes">Refresh</button>
-        </section>
-      ` : ''}
-      ${!loading && !error && routes && routes.length > 0 ? `
-        <div class="chip-row">
-          ${routes.map((r) => `
-            <button type="button" class="course-chip" data-route-id="${esc(r.id)}" style="--course:${esc(r.color || 'var(--green-fill)')}">
-              ${esc(r.name)}
-            </button>
-          `).join('')}
+  // Determine trips between start and end
+  let trips = [];
+  let matchingRoutes = [];
+  let isConnected = false;
+
+  if (feed && startStopId && endStopId && startStopId !== endStopId) {
+    matchingRoutes = (feed.routes || []).filter((r) => {
+      const rStops = (r.stops || []).map(String);
+      return rStops.includes(String(startStopId)) && rStops.includes(String(endStopId));
+    });
+
+    isConnected = matchingRoutes.length > 0;
+    trips = planTrip(feed, { from: startStopId, to: endStopId });
+  }
+
+  const { best, backup } = pickTwo(trips);
+  const remainingTrips = trips.filter((t) => t !== best && t !== backup);
+
+  // Quick preset chips that match actual stops in this feed
+  const presetChips = POPULAR_STOPS.map((p) => {
+    const found = stops.find((s) => p.match.test(s.name));
+    return found ? { label: p.name, stopId: String(found.id) } : null;
+  }).filter(Boolean);
+
+  currentRoot.innerHTML = `
+    <div class="deck-page stack">
+      <div class="sheet__head">
+        <a class="btn-plain btn-plain--muted" href="#/pond">‹ pond</a>
+        <span class="spacer"></span>
+        <button type="button" class="btn-plain" data-action="refresh" title="Refresh live arrivals">
+          ↻ ${loading ? 'updating…' : 'refresh'}
+        </button>
+      </div>
+
+      <header class="deck-head" style="--course: var(--green-fill)">
+        <p class="eyebrow">UVM CATS Shuttle</p>
+        <h1 class="page-title">Bus Tracker 🚌</h1>
+        <p class="card__hint">Live loop transit & arrival predictions</p>
+      </header>
+
+      <!-- A-to-B Stop Selector -->
+      <section class="card stack">
+        <label class="field">
+          <span>From (Start Stop)</span>
+          <select name="startStop" class="btn-plain" style="width: 100%; text-align: left; padding: 10px; border: 2px solid var(--ink); border-radius: 8px; background: var(--paper); font-size: 15px; font-weight: 700;">
+            ${stops.map((s) => `
+              <option value="${esc(s.id)}"${String(s.id) === String(startStopId) ? ' selected' : ''}>
+                ${esc(s.name)}${s.etas && s.etas.length > 0 ? ` (${s.etas.length} bus)` : ''}
+              </option>
+            `).join('')}
+          </select>
+        </label>
+
+        <div style="display: flex; justify-content: center; margin: -4px 0;">
+          <button type="button" class="btn-sketch" data-action="swap" style="font-size: 14px; padding: 4px 14px;">
+            ⇅ Swap Stops
+          </button>
         </div>
-      ` : ''}
-    `;
-  } else if (step === 'stops') {
-    bodyHTML = `
-      <p class="bus-route">
-        Route: <b>${esc(selectedRoute?.name ?? 'Selected Route')}</b>
-        <button type="button" class="btn-plain" data-action="change-route">change route</button>
-      </p>
-      <p class="hand">Select a Stop</p>
-      ${loading ? `<p class="card__hint">${esc(loadingText || 'Loading stops…')}</p>` : ''}
-      ${error ? `
-        <section class="card bus-result">
-          <p class="hand">Couldn’t load stops.</p>
-          <p class="card__hint">${esc(error)}</p>
-          <button type="button" class="btn-sketch btn-sketch--go" data-action="retry-stops">Try again</button>
-        </section>
-      ` : ''}
-      ${!loading && !error && stops && stops.length === 0 ? `
-        <section class="card bus-result">
-          <p class="hand">No stops found.</p>
-          <p class="card__hint">No active stops found for this route.</p>
-          <button type="button" class="btn-plain" data-action="change-route">‹ Back to routes</button>
-        </section>
-      ` : ''}
-      ${!loading && !error && stops && stops.length > 0 ? `
-        <ul class="stop-list">
-          ${stops.map((s) => `
-            <li>
-              <button type="button" class="stop-pick" data-stop-id="${esc(s.id)}">
+
+        <label class="field">
+          <span>To (End Stop)</span>
+          <select name="endStop" class="btn-plain" style="width: 100%; text-align: left; padding: 10px; border: 2px solid var(--ink); border-radius: 8px; background: var(--paper); font-size: 15px; font-weight: 700;">
+            ${stops.map((s) => `
+              <option value="${esc(s.id)}"${String(s.id) === String(endStopId) ? ' selected' : ''}>
                 ${esc(s.name)}
-              </button>
-            </li>
-          `).join('')}
-        </ul>
-        <p><button type="button" class="btn-plain" data-action="change-route">‹ Back to routes</button></p>
-      ` : ''}
-    `;
-  } else if (step === 'arrivals') {
-    bodyHTML = `
-      <p class="bus-route">
-        <b>${esc(selectedRoute?.name ?? 'Route')}</b> → <b>${esc(selectedStop?.name ?? 'Stop')}</b>
-        <button type="button" class="btn-plain" data-action="change-stop">change stop</button>
-        <button type="button" class="btn-plain" data-action="change-route">all routes</button>
-      </p>
-      <p class="hand">Live Arrivals</p>
-      ${loading ? `<section class="card bus-result"><p class="card__hint">${esc(loadingText || 'Checking live predictions…')}</p></section>` : ''}
-      ${error ? `
-        <section class="card bus-result">
-          <p class="hand">Couldn’t load predictions.</p>
-          <p class="card__hint">${esc(error)}</p>
-          <button type="button" class="btn-sketch btn-sketch--go" data-action="refresh-predictions">Try again</button>
-        </section>
-      ` : ''}
-      ${!loading && !error && predictions && predictions.length === 0 ? `
-        <section class="card bus-result">
-          <p class="hand">No shuttles currently running.</p>
-          <p class="card__hint">No active arrival predictions found for <b>${esc(selectedStop?.name ?? 'this stop')}</b> on the <b>${esc(selectedRoute?.name ?? 'route')}</b> line right now.</p>
-          <div class="row">
-            <button type="button" class="btn-sketch" data-action="refresh-predictions">Refresh times</button>
-            <button type="button" class="btn-plain" data-action="change-stop">Pick another stop</button>
+              </option>
+            `).join('')}
+          </select>
+        </label>
+
+        ${presetChips.length > 0 ? `
+          <div style="margin-top: 6px;">
+            <p class="card__hint" style="margin-bottom: 6px;">Quick destinations:</p>
+            <div class="chip-row">
+              ${presetChips.map((chip) => `
+                <button type="button" class="course-chip" data-quick-dest="${esc(chip.stopId)}" style="--course: ${String(chip.stopId) === String(endStopId) ? 'var(--yellow-note)' : 'var(--card)'}">
+                  ${esc(chip.label)}
+                </button>
+              `).join('')}
+            </div>
+          </div>
+        ` : ''}
+      </section>
+
+      <!-- Trip Results Section -->
+      <section class="stack">
+        ${loading && !feed ? `
+          <div class="card bus-result">
+            <p class="hand">Finding shuttles…</p>
+            <p class="card__hint">Connecting to Peak Transit live feed…</p>
+          </div>
+        ` : ''}
+
+        ${error ? `
+          <div class="card bus-result">
+            <p class="hand">Couldn't load transit data</p>
+            <p class="card__hint">${esc(error)}</p>
+            <button type="button" class="btn-sketch btn-sketch--go" data-action="refresh">Try again</button>
+          </div>
+        ` : ''}
+
+        ${!loading && !error && startStopId && endStopId && startStopId === endStopId ? `
+          <div class="card bus-result">
+            <p class="hand">You're already there! 🐸</p>
+            <p class="card__hint">Choose a different destination stop to plan your trip.</p>
+          </div>
+        ` : ''}
+
+        ${!loading && !error && startStopId !== endStopId && !isConnected && feed ? `
+          <div class="card bus-result">
+            <p class="hand">No direct loop connection</p>
+            <p class="card__hint">
+              No active campus shuttle connects <b>${esc(startStop?.name || 'origin')}</b> directly to <b>${esc(endStop?.name || 'destination')}</b> in this direction.
+            </p>
+            <p class="card__hint">Try swapping direction or picking another stop.</p>
+          </div>
+        ` : ''}
+
+        ${!loading && !error && startStopId !== endStopId && isConnected && trips.length === 0 ? `
+          <div class="card bus-result">
+            <p class="hand">No shuttles running right now</p>
+            <p class="card__hint">
+              Route: <b>${esc(matchingRoutes.map((r) => r.name).join(', '))}</b> connects these stops, but there are no active buses currently predicting on this loop.
+            </p>
+            <p class="card__hint">Campus shuttles run standard hours during the academic week.</p>
+            <button type="button" class="btn-sketch" data-action="refresh">↻ Check again</button>
+          </div>
+        ` : ''}
+
+        <!-- Best Primary Option -->
+        ${best ? `
+          <div class="card bus-result">
+            <p class="bus-take" style="--route: ${esc(best.routeColor)}">
+              Take <b>${esc(best.routeName)}</b> in <b>${best.busIn} min</b>
+            </p>
+            <p class="bus-route">
+              <b>${best.stopsCount}</b> ${best.stopsCount === 1 ? 'stop' : 'stops'} · ~<b>${best.rideMinutes} min</b> ride to ${esc(endStop?.name || 'destination')}
+            </p>
+            <p class="card__hint">
+              Arrives at ${esc(startStop?.name || 'Stop')} around <b>${esc(best.eta)}</b> · Reaches ${esc(endStop?.name || 'Destination')} ~<b>${esc(best.arriveEta)}</b>
+              ${best.vehicle ? ` · Bus #${esc(best.vehicle)}` : ''}
+            </p>
+          </div>
+        ` : ''}
+
+        <!-- Secondary / Backup Option -->
+        ${backup ? `
+          <div class="card bus-result bus-result--backup">
+            <p class="bus-take" style="--route: ${esc(backup.routeColor)}">
+              Next bus: <b>${esc(backup.routeName)}</b> in <b>${backup.busIn} min</b>
+            </p>
+            <p class="bus-route">
+              Departs ${esc(backup.eta)} · Arrives destination ~<b>${esc(backup.arriveEta)}</b> (${backup.stopsCount} stops)
+            </p>
+          </div>
+        ` : ''}
+
+        <!-- Later Trips if any -->
+        ${remainingTrips.length > 0 ? `
+          <div class="stack" style="margin-top: 8px;">
+            <p class="card__hint">Later departures:</p>
+            ${remainingTrips.slice(0, 3).map((t) => `
+              <div class="card bus-result bus-result--backup" style="opacity: 0.85;">
+                <p class="bus-take" style="--route: ${esc(t.routeColor)}; font-size: 15px;">
+                  <b>${esc(t.routeName)}</b> in <b>${t.busIn} min</b> (${esc(t.eta)})
+                </p>
+                <p class="bus-route" style="font-size: 13px;">
+                  Arrives ~${esc(t.arriveEta)} · ${t.stopsCount} stops
+                </p>
+              </div>
+            `).join('')}
+          </div>
+        ` : ''}
+      </section>
+
+      <!-- Live Routes Summary -->
+      ${feed?.routes && feed.routes.length > 0 ? `
+        <section class="stack" style="margin-top: 14px;">
+          <p class="hand" style="margin-bottom: 2px;">Campus Routes</p>
+          <div class="chip-row">
+            ${feed.routes.map((r) => `
+              <span class="course-chip" style="--course: ${esc(r.color || 'var(--green-fill)')}; cursor: default;">
+                ${esc(r.name)} (${r.stops ? r.stops.length : 0} stops)
+              </span>
+            `).join('')}
           </div>
         </section>
       ` : ''}
-      ${!loading && !error && predictions && predictions.length > 0 ? `
-        ${predictions.map((p, idx) => {
-          const minText = p.min <= 0 ? 'Arriving now' : (p.min === 1 ? '1 minute away' : `${p.min} minutes away`);
-          return `
-            <section class="card bus-result ${idx > 0 ? 'bus-result--backup' : ''}">
-              <p class="eyebrow">${idx === 0 ? 'Next Shuttle' : `Option #${idx + 1}`}</p>
-              <p class="bus-take" style="--route:${esc(p.color || selectedRoute?.color || 'var(--green-fill)')}">
-                <b>${esc(p.routeName || selectedRoute?.name || 'Shuttle')}</b> at <b>${esc(selectedStop?.name || 'Stop')}</b>
-              </p>
-              <p><b>${esc(minText)}</b>${p.vehicle ? ` · Bus #${esc(p.vehicle)}` : ''}</p>
-              ${p.eta ? `<p class="card__hint">Estimated: ${esc(p.eta)}</p>` : ''}
-            </section>
-          `;
-        }).join('')}
-        <div class="row">
-          <button type="button" class="btn-sketch" data-action="refresh-predictions">Refresh times</button>
-          <button type="button" class="btn-plain" data-action="change-stop">Pick another stop</button>
-        </div>
-      ` : ''}
-    `;
-  }
-
-  currentRoot.innerHTML = `
-    <div class="bus-page stack">
-      <div class="sheet__head">
-        <a class="btn-plain btn-plain--muted" href="#/pond">‹ pond</a>
-        <h1 class="page-title">Catch a bus</h1>
-        <button type="button" class="btn-plain" data-action="reset">reset</button>
-      </div>
-      ${bodyHTML}
     </div>
   `;
+
+  attachHandlers();
 }
 
-async function loadInitialRoutes() {
-  state.loading = true;
-  state.loadingText = 'Loading active routes…';
-  state.error = null;
-  renderUI();
+function attachHandlers() {
+  if (!currentRoot) return;
 
-  try {
-    const routes = await fetchRoutes();
-    state.routes = routes;
-    state.loading = false;
-  } catch (err) {
-    state.error = 'Failed to load routes from bus service.';
-    state.loading = false;
-  }
-  renderUI();
-}
+  const startSelect = currentRoot.querySelector('select[name="startStop"]');
+  const endSelect = currentRoot.querySelector('select[name="endStop"]');
 
-async function selectRoute(routeId) {
-  const route = (state.routes || []).find((r) => r.id === String(routeId));
-  if (!route) return;
+  startSelect?.addEventListener('change', (e) => {
+    state.startStopId = e.target.value;
+    saveStops(state.startStopId, state.endStopId);
+    renderUI();
+  });
 
-  state.selectedRoute = route;
-  state.selectedStop = null;
-  state.stops = null;
-  state.predictions = null;
-  state.step = 'stops';
-  state.loading = true;
-  state.loadingText = `Loading stops for ${route.name}…`;
-  state.error = null;
-  renderUI();
+  endSelect?.addEventListener('change', (e) => {
+    state.endStopId = e.target.value;
+    saveStops(state.startStopId, state.endStopId);
+    renderUI();
+  });
 
-  try {
-    const stops = await fetchStops(route.id);
-    state.stops = stops;
-    state.loading = false;
-  } catch (err) {
-    state.error = `Failed to load stops for ${route.name}.`;
-    state.loading = false;
-  }
-  renderUI();
-}
-
-async function selectStop(stopId) {
-  const stop = (state.stops || []).find((s) => s.id === String(stopId));
-  if (!stop) return;
-
-  state.selectedStop = stop;
-  state.predictions = null;
-  state.step = 'arrivals';
-  state.loading = true;
-  state.loadingText = `Checking live arrivals for ${stop.name}…`;
-  state.error = null;
-  renderUI();
-
-  try {
-    const predictions = await fetchPredictions(stop.id);
-    state.predictions = predictions;
-    state.loading = false;
-  } catch (err) {
-    state.error = `Failed to load arrival predictions for ${stop.name}.`;
-    state.loading = false;
-  }
-  renderUI();
-}
-
-async function refreshPredictions() {
-  if (!state.selectedStop) return;
-  state.loading = true;
-  state.loadingText = `Updating arrivals for ${state.selectedStop.name}…`;
-  state.error = null;
-  renderUI();
-
-  try {
-    const predictions = await fetchPredictions(state.selectedStop.id);
-    state.predictions = predictions;
-    state.loading = false;
-  } catch (err) {
-    state.error = 'Could not update live arrivals.';
-    state.loading = false;
-  }
-  renderUI();
-}
-
-function setupEvents(root) {
-  // Delegate clicks on the bus page
-  root.addEventListener('click', (e) => {
-    const target = e.target;
-
-    // Route button click (.course-chip)
-    const routeChip = target.closest('[data-route-id]');
-    if (routeChip) {
-      selectRoute(routeChip.dataset.routeId);
+  currentRoot.addEventListener('click', (e) => {
+    // Swap origin and destination
+    if (e.target.closest('[data-action="swap"]')) {
+      const temp = state.startStopId;
+      state.startStopId = state.endStopId;
+      state.endStopId = temp;
+      saveStops(state.startStopId, state.endStopId);
+      renderUI();
       return;
     }
 
-    // Stop button click (.stop-pick)
-    const stopPick = target.closest('[data-stop-id]');
-    if (stopPick) {
-      selectStop(stopPick.dataset.stopId);
+    // Refresh live predictions
+    if (e.target.closest('[data-action="refresh"]')) {
+      loadData(false);
       return;
     }
 
-    // Action button clicks
-    const actionBtn = target.closest('[data-action]');
-    if (!actionBtn) return;
-    const action = actionBtn.dataset.action;
-
-    if (action === 'change-route') {
-      state.step = 'routes';
-      state.selectedRoute = null;
-      state.selectedStop = null;
-      state.stops = null;
-      state.predictions = null;
+    // Quick destination button
+    const quickBtn = e.target.closest('[data-quick-dest]');
+    if (quickBtn) {
+      const destId = quickBtn.dataset.quickDest;
+      if (destId === state.startStopId) {
+        state.startStopId = state.endStopId;
+      }
+      state.endStopId = destId;
+      saveStops(state.startStopId, state.endStopId);
       renderUI();
-    } else if (action === 'change-stop') {
-      state.step = 'stops';
-      state.selectedStop = null;
-      state.predictions = null;
-      renderUI();
-    } else if (action === 'retry-routes') {
-      loadInitialRoutes();
-    } else if (action === 'retry-stops') {
-      if (state.selectedRoute) selectRoute(state.selectedRoute.id);
-    } else if (action === 'refresh-predictions') {
-      refreshPredictions();
-    } else if (action === 'reset') {
-      openBus();
-      loadInitialRoutes();
     }
   });
 }
 
-/**
- * Main render function called by the router
- * @param {HTMLElement} root
- */
+async function loadData(showFullLoading = true) {
+  if (showFullLoading) {
+    state.loading = true;
+    state.error = null;
+    renderUI();
+  }
+
+  try {
+    const feed = await loadBus();
+    if (!feed || !feed.ok) {
+      throw new Error(feed?.error || 'Failed to fetch bus routes from server.');
+    }
+
+    state.feed = feed;
+    state.error = null;
+
+    // Initialize default selections if not already chosen
+    const stops = feed.stops || [];
+    if (!state.startStopId || !state.endStopId) {
+      const { fromId, toId } = getSavedStops(stops);
+      state.startStopId = fromId;
+      state.endStopId = toId;
+      saveStops(fromId, toId);
+    }
+  } catch (err) {
+    console.error('[renderBus] Load error:', err);
+    state.error = err instanceof Error ? err.message : String(err);
+  } finally {
+    state.loading = false;
+    renderUI();
+  }
+}
+
 export async function renderBus(root) {
   currentRoot = root;
 
@@ -291,39 +363,15 @@ export async function renderBus(root) {
     state.timer = null;
   }
 
-  setupEvents(root);
+  await loadData(true);
 
-  if (!state.routes) {
-    await loadInitialRoutes();
-  } else {
-    renderUI();
-  }
-
-  // Periodic refresh when on arrivals step
+  // Auto-refresh ETAs every 30 seconds while on this view
   state.timer = setInterval(() => {
-    if (location.hash !== '#/bus') {
+    if (location.hash === '#/bus') {
+      loadData(false);
+    } else {
       clearInterval(state.timer);
       state.timer = null;
-      return;
     }
-    if (state.step === 'arrivals' && state.selectedStop && !state.loading) {
-      fetchPredictions(state.selectedStop.id).then((preds) => {
-        state.predictions = preds;
-        renderUI();
-      }).catch(() => { /* silent fail on background interval */ });
-    }
-  }, 15000);
-}
-
-/**
- * Reset to initial routes view
- */
-export function openBus() {
-  state.step = 'routes';
-  state.selectedRoute = null;
-  state.selectedStop = null;
-  state.stops = null;
-  state.predictions = null;
-  state.error = null;
-  location.hash = '#/bus';
+  }, 30000);
 }

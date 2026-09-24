@@ -245,37 +245,13 @@ app.all(['/api/bus', '/functions/v1/bus', '/functions/v1/bus/*'], async (req, re
     }
     subpath = (subpath || 'routes').replace(/^\/+/, '');
 
-    // Force v5 directly if requested or if feed is requested
-    if (subpath === 'feed' || req.query.v5 === '1' || req.query.feed === '1') {
-      const directV5 = await fallbackPeakTransitLocal(subpath === 'feed' ? 'feed' : subpath, req.query);
-      if (directV5) return res.json(directV5);
-    }
-
-    const targetUrl = new URL(`https://uvm.rider.peaktransit.com/api/v1/${subpath}`);
-    for (const [k, v] of Object.entries(req.query)) {
-      if (k !== 'endpoint' && k !== 'path') {
-        targetUrl.searchParams.set(k, v);
-      }
-    }
-
-    const upstream = await fetch(targetUrl.toString(), {
-      method: 'GET',
-      headers: SPOOFED_HEADERS,
-    });
-
-    if (upstream.ok) {
-      const data = await upstream.json();
+    // Directly use Peak Transit v5 API exclusively
+    const data = await fallbackPeakTransitLocal(subpath, req.query);
+    if (data) {
       return res.json(data);
     }
 
-    if (upstream.status === 404 || upstream.status === 502) {
-      const fallback = await fallbackPeakTransitLocal(subpath, req.query);
-      if (fallback) {
-        return res.json(fallback);
-      }
-    }
-
-    return res.status(upstream.status).json({ error: `Peak Transit status: ${upstream.statusText}` });
+    return res.status(502).json({ error: 'Peak Transit v5 service unavailable' });
   } catch (err) {
     console.error('Local bus proxy error:', err);
     return res.status(500).json({ error: String(err?.message || err) });

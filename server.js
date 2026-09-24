@@ -117,6 +117,107 @@ async function fallbackPeakTransitLocal(endpoint, query) {
         predictions.sort((a, b) => a.min - b.min);
         return { predictions };
       }
+    } else if (endpoint === 'feed') {
+      const [routesRes, stopsRes, routeStopsRes, etaRes] = await Promise.all([
+        fetch(`${BPT_API_BASE}&controller=route2&action=list`, { headers: SPOOFED_HEADERS }),
+        fetch(`${BPT_API_BASE}&controller=stop2&action=list`, { headers: SPOOFED_HEADERS }),
+        fetch(`${BPT_API_BASE}&controller=routestop2&action=list`, { headers: SPOOFED_HEADERS }),
+        fetch(`${BPT_API_BASE}&controller=eta&action=list`, { headers: SPOOFED_HEADERS }),
+      ]);
+      if (routesRes.ok && stopsRes.ok && routeStopsRes.ok && etaRes.ok) {
+        const routesJson = await routesRes.json();
+        const stopsJson = await stopsRes.json();
+        const routeStopsJson = await routeStopsRes.json();
+        const etaJson = await etaRes.json();
+        const nowSec = Math.floor(Date.now() / 1000);
+
+        const routeStopsMap = new Map();
+        for (const rs of (routeStopsJson.routeStops || [])) {
+          if (!rs.disabled) {
+            const rId = String(rs.routeID);
+            if (!routeStopsMap.has(rId)) routeStopsMap.set(rId, []);
+            routeStopsMap.get(rId).push(Number(rs.stopID));
+          }
+        }
+
+        const stopEtasMap = new Map();
+        const routeEtasMap = new Map();
+        for (const item of (etaJson.stop || [])) {
+          const sId = Number(item.stopID);
+          const rId = String(item.routeID);
+          if (!stopEtasMap.has(sId)) stopEtasMap.set(sId, []);
+          if (!routeEtasMap.has(rId)) routeEtasMap.set(rId, new Map());
+          if (!routeEtasMap.get(rId).has(sId)) routeEtasMap.get(rId).set(sId, []);
+
+          for (const etaProp of ['ETA1', 'ETA2']) {
+            const ts = item[etaProp];
+            if (ts && ts > nowSec) {
+              const min = Math.max(0, Math.round((ts - nowSec) / 60));
+              const entry = {
+                routeId: rId,
+                stopId: sId,
+                min,
+                eta: new Date(ts * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+                vehicle: String(item.vehicleID || item.busID || ''),
+                timestamp: ts,
+              };
+              stopEtasMap.get(sId).push(entry);
+              routeEtasMap.get(rId).get(sId).push(entry);
+            }
+          }
+        }
+
+        const routes = (routesJson.routes || [])
+          .filter((r) => !r.hidden && !r.disabled)
+          .map((r) => {
+            const rId = String(r.routeID);
+            const stopsOrder = routeStopsMap.get(rId) || [];
+            const rEtasObj = {};
+            if (routeEtasMap.has(rId)) {
+              for (const [stId, arr] of routeEtasMap.get(rId).entries()) {
+                rEtasObj[stId] = arr.sort((a, b) => a.min - b.min);
+              }
+            }
+            return {
+              id: r.routeID,
+              route_id: r.routeID,
+              routeID: r.routeID,
+              name: r.longName || r.shortName,
+              route_name: r.longName || r.shortName,
+              color: r.color ? `#${r.color}` : '#00563b',
+              stops: stopsOrder,
+              etas: rEtasObj,
+            };
+          });
+
+        const stops = (stopsJson.stop || [])
+          .filter((s) => !s.hidden && !s.disabled)
+          .map((s) => {
+            const sId = Number(s.stopID);
+            const sEtas = (stopEtasMap.get(sId) || []).map((e) => {
+              const matchedRoute = routes.find((r) => String(r.id) === e.routeId);
+              return {
+                ...e,
+                routeName: matchedRoute?.name || 'Shuttle',
+                color: matchedRoute?.color || 'var(--green-fill)',
+              };
+            }).sort((a, b) => a.min - b.min);
+
+            return {
+              id: s.stopID,
+              stop_id: s.stopID,
+              stopID: s.stopID,
+              name: s.longName || s.shortName || 'Bus Stop',
+              code: s.stopCode || '',
+              lat: s.lat,
+              lng: s.lng,
+              lon: s.lng,
+              etas: sEtas,
+            };
+          });
+
+        return { ok: true, at: Date.now(), routes, stops };
+      }
     }
   } catch (e) {
     console.error('[Server Bus Fallback Error]', e);
@@ -143,6 +244,12 @@ app.all(['/api/bus', '/functions/v1/bus', '/functions/v1/bus/*'], async (req, re
       subpath = req.query.endpoint || req.query.path;
     }
     subpath = (subpath || 'routes').replace(/^\/+/, '');
+
+    // Force v5 directly if requested or if feed is requested
+    if (subpath === 'feed' || req.query.v5 === '1' || req.query.feed === '1') {
+      const directV5 = await fallbackPeakTransitLocal(subpath === 'feed' ? 'feed' : subpath, req.query);
+      if (directV5) return res.json(directV5);
+    }
 
     const targetUrl = new URL(`https://uvm.rider.peaktransit.com/api/v1/${subpath}`);
     for (const [k, v] of Object.entries(req.query)) {

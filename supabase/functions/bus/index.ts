@@ -134,6 +134,107 @@ async function fallbackPeakTransit(endpoint: string, queryParams: URLSearchParam
         predictions.sort((a, b) => a.min - b.min);
         return { predictions };
       }
+    } else if (endpoint === 'feed') {
+      const [routesRes, stopsRes, routeStopsRes, etaRes] = await Promise.all([
+        fetch(`${BPT_API_BASE}&controller=route2&action=list`, { headers: SPOOFED_HEADERS }),
+        fetch(`${BPT_API_BASE}&controller=stop2&action=list`, { headers: SPOOFED_HEADERS }),
+        fetch(`${BPT_API_BASE}&controller=routestop2&action=list`, { headers: SPOOFED_HEADERS }),
+        fetch(`${BPT_API_BASE}&controller=eta&action=list`, { headers: SPOOFED_HEADERS }),
+      ]);
+      if (routesRes.ok && stopsRes.ok && routeStopsRes.ok && etaRes.ok) {
+        const routesJson = await routesRes.json();
+        const stopsJson = await stopsRes.json();
+        const routeStopsJson = await routeStopsRes.json();
+        const etaJson = await etaRes.json();
+        const nowSec = Math.floor(Date.now() / 1000);
+
+        const routeStopsMap = new Map<string, number[]>();
+        for (const rs of (routeStopsJson.routeStops || [])) {
+          if (!rs.disabled) {
+            const rId = String(rs.routeID);
+            if (!routeStopsMap.has(rId)) routeStopsMap.set(rId, []);
+            routeStopsMap.get(rId)!.push(Number(rs.stopID));
+          }
+        }
+
+        const stopEtasMap = new Map<number, any[]>();
+        const routeEtasMap = new Map<string, Map<number, any[]>>();
+        for (const item of (etaJson.stop || [])) {
+          const sId = Number(item.stopID);
+          const rId = String(item.routeID);
+          if (!stopEtasMap.has(sId)) stopEtasMap.set(sId, []);
+          if (!routeEtasMap.has(rId)) routeEtasMap.set(rId, new Map());
+          if (!routeEtasMap.get(rId)!.has(sId)) routeEtasMap.get(rId)!.set(sId, []);
+
+          for (const etaProp of ['ETA1', 'ETA2']) {
+            const ts = item[etaProp];
+            if (ts && ts > nowSec) {
+              const min = Math.max(0, Math.round((ts - nowSec) / 60));
+              const entry = {
+                routeId: rId,
+                stopId: sId,
+                min,
+                eta: new Date(ts * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+                vehicle: String(item.vehicleID || item.busID || ''),
+                timestamp: ts,
+              };
+              stopEtasMap.get(sId)!.push(entry);
+              routeEtasMap.get(rId)!.get(sId)!.push(entry);
+            }
+          }
+        }
+
+        const routes = (routesJson.routes || [])
+          .filter((r: any) => !r.hidden && !r.disabled)
+          .map((r: any) => {
+            const rId = String(r.routeID);
+            const stopsOrder = routeStopsMap.get(rId) || [];
+            const rEtasObj: Record<string, any[]> = {};
+            if (routeEtasMap.has(rId)) {
+              for (const [stId, arr] of routeEtasMap.get(rId)!.entries()) {
+                rEtasObj[stId] = arr.sort((a, b) => a.min - b.min);
+              }
+            }
+            return {
+              id: r.routeID,
+              route_id: r.routeID,
+              routeID: r.routeID,
+              name: r.longName || r.shortName,
+              route_name: r.longName || r.shortName,
+              color: r.color ? `#${r.color}` : '#00563b',
+              stops: stopsOrder,
+              etas: rEtasObj,
+            };
+          });
+
+        const stops = (stopsJson.stop || [])
+          .filter((s: any) => !s.hidden && !s.disabled)
+          .map((s: any) => {
+            const sId = Number(s.stopID);
+            const sEtas = (stopEtasMap.get(sId) || []).map((e: any) => {
+              const matchedRoute = routes.find((r: any) => String(r.id) === e.routeId);
+              return {
+                ...e,
+                routeName: matchedRoute?.name || 'Shuttle',
+                color: matchedRoute?.color || 'var(--green-fill)',
+              };
+            }).sort((a: any, b: any) => a.min - b.min);
+
+            return {
+              id: s.stopID,
+              stop_id: s.stopID,
+              stopID: s.stopID,
+              name: s.longName || s.shortName || 'Bus Stop',
+              code: s.stopCode || '',
+              lat: s.lat,
+              lng: s.lng,
+              lon: s.lng,
+              etas: sEtas,
+            };
+          });
+
+        return { ok: true, at: Date.now(), routes, stops };
+      }
     }
   } catch (fbErr) {
     console.error('[Bus Proxy Fallback Error]', fbErr);
@@ -162,6 +263,12 @@ Deno.serve(async (req: Request) => {
 
     // Clean leading slashes and default to 'routes'
     subpath = subpath.replace(/^\/+/, '') || 'routes';
+
+    // Direct resolution via Peak Transit v5 if feed is requested or v5 param provided
+    if (subpath === 'feed' || reqUrl.searchParams.has('v5') || reqUrl.searchParams.has('feed')) {
+      const directV5 = await fallbackPeakTransit(subpath === 'feed' ? 'feed' : subpath, reqUrl.searchParams);
+      if (directV5) return reply(directV5);
+    }
 
     // 2. Append the rest of the path to https://uvm.rider.peaktransit.com/api/v1/
     const targetUrl = new URL(`https://uvm.rider.peaktransit.com/api/v1/${subpath}`);

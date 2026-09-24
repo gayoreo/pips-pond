@@ -62,14 +62,25 @@ Deno.serve(async (req: Request) => {
       const routesJson = await routesRes.json();
       const routeStopsJson = routeStopsRes.ok ? await routeStopsRes.json() : { routeStops: [] };
 
-      // Map stop order per route
-      const routeStopsMap = new Map<string, number[]>();
+      // Filter out disabled route-stops, group the remaining ones by routeID
+      const routeStopsByRoute = new Map<string, any[]>();
       for (const rs of (routeStopsJson.routeStops || [])) {
         if (!rs.disabled) {
           const rId = String(rs.routeID);
-          if (!routeStopsMap.has(rId)) routeStopsMap.set(rId, []);
-          routeStopsMap.get(rId)!.push(Number(rs.stopID));
+          if (!routeStopsByRoute.has(rId)) routeStopsByRoute.set(rId, []);
+          routeStopsByRoute.get(rId)!.push(rs);
         }
+      }
+
+      // Sort numerically by sortOrder and map to ordered array of stopID strings
+      const routeStopsMap = new Map<string, string[]>();
+      for (const [rId, rsList] of routeStopsByRoute.entries()) {
+        rsList.sort((a: any, b: any) => {
+          const orderA = Number(a.sortOrder ?? a.sequence ?? a.routeStopID ?? 0);
+          const orderB = Number(b.sortOrder ?? b.sequence ?? b.routeStopID ?? 0);
+          return orderA - orderB;
+        });
+        routeStopsMap.set(rId, rsList.map((rs: any) => String(rs.stopID)));
       }
 
       const routes = (routesJson.routes || [])
@@ -201,13 +212,23 @@ Deno.serve(async (req: Request) => {
       const etaJson = etaRes.ok ? await etaRes.json() : { stop: [] };
       const nowSec = Math.floor(Date.now() / 1000);
 
-      const routeStopsMap = new Map<string, number[]>();
+      const routeStopsByRoute = new Map<string, any[]>();
       for (const rs of (routeStopsJson.routeStops || [])) {
         if (!rs.disabled) {
           const rId = String(rs.routeID);
-          if (!routeStopsMap.has(rId)) routeStopsMap.set(rId, []);
-          routeStopsMap.get(rId)!.push(Number(rs.stopID));
+          if (!routeStopsByRoute.has(rId)) routeStopsByRoute.set(rId, []);
+          routeStopsByRoute.get(rId)!.push(rs);
         }
+      }
+
+      const routeStopsMap = new Map<string, string[]>();
+      for (const [rId, rsList] of routeStopsByRoute.entries()) {
+        rsList.sort((a: any, b: any) => {
+          const orderA = Number(a.sortOrder ?? a.sequence ?? a.routeStopID ?? 0);
+          const orderB = Number(b.sortOrder ?? b.sequence ?? b.routeStopID ?? 0);
+          return orderA - orderB;
+        });
+        routeStopsMap.set(rId, rsList.map((rs: any) => String(rs.stopID)));
       }
 
       const stopEtasMap = new Map<number, any[]>();

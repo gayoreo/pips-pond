@@ -1,5 +1,5 @@
 // Campus Bus Tracker: A-to-B trip planner for UVM CATS shuttles.
-import { loadBus, planTrip, pickTwo } from '../data/bus.js';
+import { loadBus, planTrip, pickTwo, fetchRoutes } from '../data/bus.js';
 import { esc } from '../ui/dom.js';
 
 const STORAGE_FROM = 'pips:bus:from';
@@ -16,8 +16,10 @@ const state = {
 
 let currentRoot = null;
 
-// Popular campus destination shortcuts
+// Campus destination shortcuts including STEM and WDW
 const POPULAR_STOPS = [
+  { name: 'STEM', match: /stem/i },
+  { name: 'WDW', match: /wdw/i },
   { name: 'Davis Center', match: /davis/i },
   { name: 'Redstone Apts', match: /redstone.*apt/i },
   { name: 'Coolidge Hall', match: /coolidge/i },
@@ -26,7 +28,7 @@ const POPULAR_STOPS = [
   { name: 'Patrick Gym / PFG', match: /pfg|athletic|patrick/i },
 ];
 
-function getSavedStops(stops = []) {
+function getSavedStops(stops = [], routes = []) {
   let fromId = '';
   let toId = '';
 
@@ -40,15 +42,28 @@ function getSavedStops(stops = []) {
   const validIds = new Set(stops.map((s) => String(s.id)));
 
   if (!fromId || !validIds.has(fromId)) {
-    // Default origin: e.g. Coolidge or Redstone or first stop
-    const defaultFrom = stops.find((s) => /coolidge|redstone/i.test(s.name)) || stops[0];
+    const stemStop = stops.find((s) => /stem/i.test(s.name));
+    const activeWithEtas = stops.find((s) => s.etas && s.etas.length > 0);
+    const defaultFrom = stemStop || activeWithEtas || stops.find((s) => /coolidge|redstone/i.test(s.name)) || stops[0];
     fromId = defaultFrom ? String(defaultFrom.id) : '';
   }
 
   if (!toId || !validIds.has(toId) || toId === fromId) {
-    // Default destination: Davis Center or Billings Library or second stop
-    const defaultTo = stops.find((s) => /davis|billings|waterman/i.test(s.name) && String(s.id) !== fromId) ||
-      stops.find((s) => String(s.id) !== fromId) || stops[1] || stops[0];
+    const wdwStop = stops.find((s) => /wdw/i.test(s.name) && String(s.id) !== fromId);
+    let defaultTo = wdwStop;
+    if (!defaultTo) {
+      const matchingRoute = routes.find((r) => (r.stops || []).map(String).includes(fromId));
+      if (matchingRoute && matchingRoute.stops && matchingRoute.stops.length > 1) {
+        const idx = matchingRoute.stops.map(String).indexOf(fromId);
+        const targetIdx = (idx + Math.min(2, matchingRoute.stops.length - 1)) % matchingRoute.stops.length;
+        const nextId = matchingRoute.stops[targetIdx];
+        defaultTo = stops.find((s) => String(s.id) === String(nextId));
+      }
+    }
+    if (!defaultTo) {
+      defaultTo = stops.find((s) => /davis|billings|waterman/i.test(s.name) && String(s.id) !== fromId) ||
+        stops.find((s) => String(s.id) !== fromId) || stops[1] || stops[0];
+    }
     toId = defaultTo ? String(defaultTo.id) : '';
   }
 
@@ -84,10 +99,32 @@ function renderUI() {
   let isConnected = false;
 
   if (feed && startStopId && endStopId && startStopId !== endStopId) {
-    matchingRoutes = (feed.routes || []).filter((r) => {
-      const rStops = (r.stops || []).map(String);
-      return rStops.includes(String(startStopId)) && rStops.includes(String(endStopId));
-    });
+    // Explicitly verify directionality using route.stops array:
+    // A route is only a valid connection if the endStop exists in the array after the startStop
+    // (or wraps around, since these are continuous loops).
+    matchingRoutes = (feed.routes || []).map((r) => {
+      const routeStops = (r.stops || []).map(String);
+      if (routeStops.length < 2) return null;
+
+      const startIdx = routeStops.indexOf(String(startStopId));
+      const endIdx = routeStops.indexOf(String(endStopId));
+      if (startIdx === -1 || endIdx === -1 || startIdx === endIdx) return null;
+
+      let stopsCount = 0;
+      if (endIdx > startIdx) {
+        stopsCount = endIdx - startIdx;
+      } else if (endIdx < startIdx) {
+        // Continuous loop wrap-around
+        stopsCount = (routeStops.length - startIdx) + endIdx;
+      }
+
+      if (stopsCount <= 0 || stopsCount >= routeStops.length) return null;
+
+      return {
+        ...r,
+        stopsCount,
+      };
+    }).filter(Boolean);
 
     isConnected = matchingRoutes.length > 0;
     trips = planTrip(feed, { from: startStopId, to: endStopId });
@@ -160,6 +197,19 @@ function renderUI() {
             </div>
           </div>
         ` : ''}
+
+        ${matchingRoutes.length > 0 ? `
+          <div style="margin-top: 6px; padding-top: 8px; border-top: 1px dashed var(--line);">
+            <p class="card__hint" style="margin-bottom: 6px;">Loop connection (${esc(startStop?.name || 'Start')} → ${esc(endStop?.name || 'End')}):</p>
+            <div class="chip-row">
+              ${matchingRoutes.map((r) => `
+                <span class="course-chip" style="--course: ${esc(r.color || 'var(--green-fill)')}; font-weight: 700;">
+                  ${esc(r.name)} (${r.stopsCount} ${r.stopsCount === 1 ? 'stop' : 'stops'})
+                </span>
+              `).join('')}
+            </div>
+          </div>
+        ` : ''}
       </section>
 
       <!-- Trip Results Section -->
@@ -196,17 +246,6 @@ function renderUI() {
           </div>
         ` : ''}
 
-        ${!loading && !error && startStopId !== endStopId && isConnected && trips.length === 0 ? `
-          <div class="card bus-result">
-            <p class="hand">No shuttles running right now</p>
-            <p class="card__hint">
-              Route: <b>${esc(matchingRoutes.map((r) => r.name).join(', '))}</b> connects these stops, but there are no active buses currently predicting on this loop.
-            </p>
-            <p class="card__hint">Campus shuttles run standard hours during the academic week.</p>
-            <button type="button" class="btn-sketch" data-action="refresh">↻ Check again</button>
-          </div>
-        ` : ''}
-
         <!-- Best Primary Option -->
         ${best ? `
           <div class="card bus-result">
@@ -217,7 +256,7 @@ function renderUI() {
               <b>${best.stopsCount}</b> ${best.stopsCount === 1 ? 'stop' : 'stops'} · ~<b>${best.rideMinutes} min</b> ride to ${esc(endStop?.name || 'destination')}
             </p>
             <p class="card__hint">
-              Arrives at ${esc(startStop?.name || 'Stop')} around <b>${esc(best.eta)}</b> · Reaches ${esc(endStop?.name || 'Destination')} ~<b>${esc(best.arriveEta)}</b>
+              Departs ${esc(startStop?.name || 'Stop')} around <b>${esc(best.eta)}</b> · Reaches ${esc(endStop?.name || 'Destination')} ~<b>${esc(best.arriveEta)}</b>
               ${best.vehicle ? ` · Bus #${esc(best.vehicle)}` : ''}
             </p>
           </div>
@@ -253,16 +292,21 @@ function renderUI() {
         ` : ''}
       </section>
 
-      <!-- Live Routes Summary -->
+      <!-- Live Campus Routes Summary with actual stop counts -->
       ${feed?.routes && feed.routes.length > 0 ? `
         <section class="stack" style="margin-top: 14px;">
           <p class="hand" style="margin-bottom: 2px;">Campus Routes</p>
           <div class="chip-row">
-            ${feed.routes.map((r) => `
-              <span class="course-chip" style="--course: ${esc(r.color || 'var(--green-fill)')}; cursor: default;">
-                ${esc(r.name)} (${r.stops ? r.stops.length : 0} stops)
-              </span>
-            `).join('')}
+            ${feed.routes.filter((r) => r.stops && r.stops.length > 0).map((r) => {
+              const matched = matchingRoutes.find((m) => String(m.id) === String(r.id));
+              const countText = matched ? `${matched.stopsCount} stops` : `${r.stops.length} stops`;
+              const highlightStyle = matched ? 'border: 2px solid var(--ink); font-weight: 800; box-shadow: 0 2px 8px rgba(0,0,0,0.15);' : 'cursor: default;';
+              return `
+                <span class="course-chip" style="--course: ${esc(r.color || 'var(--green-fill)')}; ${highlightStyle}">
+                  ${esc(r.name)} (${esc(countText)})
+                </span>
+              `;
+            }).join('')}
           </div>
         </section>
       ` : ''}
@@ -329,9 +373,17 @@ async function loadData(showFullLoading = true) {
   }
 
   try {
-    const feed = await loadBus();
+    let feed = await loadBus();
     if (!feed || !feed.ok) {
       throw new Error(feed?.error || 'Failed to fetch bus routes from server.');
+    }
+
+    // Ensure routes have stops populated by calling fetchRoutes if needed
+    if (!feed.routes || feed.routes.every((r) => !r.stops || r.stops.length === 0)) {
+      const routesWithStops = await fetchRoutes();
+      if (routesWithStops.length > 0) {
+        feed.routes = routesWithStops;
+      }
     }
 
     state.feed = feed;
@@ -340,7 +392,7 @@ async function loadData(showFullLoading = true) {
     // Initialize default selections if not already chosen
     const stops = feed.stops || [];
     if (!state.startStopId || !state.endStopId) {
-      const { fromId, toId } = getSavedStops(stops);
+      const { fromId, toId } = getSavedStops(stops, feed.routes);
       state.startStopId = fromId;
       state.endStopId = toId;
       saveStops(fromId, toId);

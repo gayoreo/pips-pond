@@ -114,14 +114,11 @@ export function nearestStops(stops = [], coord = {}, count = 3) {
  */
 export async function loadBus() {
   try {
-    const feed = await callProxy('feed');
-    if (feed && feed.ok && Array.isArray(feed.stops) && Array.isArray(feed.routes)) {
-      return feed;
-    }
+    // 1. Fetch active routes with stops
+    const routes = await fetchRoutes();
 
-    // Assemble via individual endpoints if unified feed is not available
-    const [routes, stops, preds] = await Promise.all([
-      fetchRoutes(),
+    // 2. Fetch stops and live arrival predictions
+    const [stops, preds] = await Promise.all([
       fetchStops(),
       fetchPredictions(),
     ]);
@@ -133,7 +130,7 @@ export async function loadBus() {
 
     const routesMap = new Map();
     for (const r of routes) {
-      routesMap.set(String(r.id), { ...r, stops: r.stops || [], etas: {} });
+      routesMap.set(String(r.id), { ...r, stops: Array.isArray(r.stops) ? r.stops.map(String) : [], etas: {} });
     }
 
     for (const p of preds) {
@@ -230,42 +227,28 @@ export function planTrip(feed, { from, to } = {}) {
 
       for (const route of feed.routes) {
         const routeStops = (route.stops || []).map(String);
-        if (routeStops.length === 0) continue;
+        if (routeStops.length < 2) continue;
 
-        // Find positions of origin and destination stops on this route
-        const fromIndices = [];
-        const toIndices = [];
-        routeStops.forEach((id, idx) => {
-          if (id === originStopId) fromIndices.push(idx);
-          if (id === destStopId) toIndices.push(idx);
-        });
+        const startIdx = routeStops.indexOf(originStopId);
+        const endIdx = routeStops.indexOf(destStopId);
 
-        // If route does not visit both stops, skip
-        if (fromIndices.length === 0 || toIndices.length === 0) continue;
+        // Explicitly verify directionality along route.stops:
+        // A route is only a valid connection if endStop exists in the array after startStop
+        // or wraps around, since these are continuous loops.
+        if (startIdx === -1 || endIdx === -1 || startIdx === endIdx) continue;
 
-        // Find minimum forward loop distance from origin to destination
-        let minDist = Infinity;
-        const N = routeStops.length;
-
-        for (const oi of fromIndices) {
-          for (const di of toIndices) {
-            if (di > oi) {
-              const d = di - oi;
-              if (d < minDist) minDist = d;
-            } else if (di < oi) {
-              // Wrap-around in the loop
-              const d = (N - oi) + di;
-              if (d < minDist) minDist = d;
-            }
-          }
+        let stopsCount = 0;
+        if (endIdx > startIdx) {
+          stopsCount = endIdx - startIdx;
+        } else if (endIdx < startIdx) {
+          // Loop wrap-around
+          stopsCount = (routeStops.length - startIdx) + endIdx;
         }
 
-        if (minDist === Infinity || minDist <= 0 || minDist >= N) {
-          continue;
-        }
+        if (stopsCount <= 0 || stopsCount >= routeStops.length) continue;
 
         // Estimated transit ride time: ~1.8 mins per stop, minimum 2 mins
-        const rideMinutes = Math.max(2, Math.round(minDist * 1.8));
+        const rideMinutes = Math.max(2, Math.round(stopsCount * 1.8));
 
         // Get live arrival predictions for this route at the boarding stop
         let etas = [];
@@ -273,6 +256,47 @@ export function planTrip(feed, { from, to } = {}) {
           etas = route.etas[originStopId];
         } else if (Array.isArray(boardStop.etas)) {
           etas = boardStop.etas.filter((e) => String(e.routeId) === String(route.id));
+        }
+
+        // If no direct ETA exists at this stop, check if any stop on this route has an active ETA
+        // and propagate arrival along the loop forward to boardStop
+        if (etas.length === 0) {
+          let activeEta = null;
+          let minDistanceToBus = Infinity;
+
+          if (route.etas) {
+            for (const [sId, sEtas] of Object.entries(route.etas)) {
+              if (Array.isArray(sEtas) && sEtas.length > 0) {
+                const busStopIdx = routeStops.indexOf(String(sId));
+                if (busStopIdx !== -1) {
+                  // Distance from bus to boarding stop along loop
+                  const distToBoard = startIdx >= busStopIdx ? (startIdx - busStopIdx) : (routeStops.length - busStopIdx + startIdx);
+                  if (distToBoard < minDistanceToBus) {
+                    minDistanceToBus = distToBoard;
+                    activeEta = { ...sEtas[0], distToBoard };
+                  }
+                }
+              }
+            }
+          }
+
+          if (activeEta) {
+            const propagatedMin = Math.round(Number(activeEta.min ?? 0) + minDistanceToBus * 1.8);
+            const ts = activeEta.timestamp ? (activeEta.timestamp + minDistanceToBus * 108) : (Math.floor(now / 1000) + propagatedMin * 60);
+            etas = [{
+              ...activeEta,
+              min: propagatedMin,
+              eta: new Date(ts * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+              isPropagated: true,
+            }];
+          } else {
+            // Provide an estimated loop schedule arrival
+            etas = [{
+              min: 6,
+              eta: new Date(now + 6 * 60000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+              isScheduled: true,
+            }];
+          }
         }
 
         for (const etaItem of etas) {
@@ -286,6 +310,7 @@ export function planTrip(feed, { from, to } = {}) {
               id: route.id,
               name: route.name,
               color: route.color || 'var(--green-fill)',
+              stops: routeStops,
             },
             routeName: route.name,
             routeColor: route.color || 'var(--green-fill)',
@@ -297,7 +322,7 @@ export function planTrip(feed, { from, to } = {}) {
             arriveIn,
             rideMinutes,
             walk,
-            stopsCount: minDist,
+            stopsCount,
             boardStop,
             alightStop,
           });
@@ -371,7 +396,7 @@ export async function fetchRoutes(params = {}) {
       id: String(r.id ?? r.route_id ?? r.routeID ?? ''),
       name: String(r.name ?? r.route_name ?? r.routeName ?? r.title ?? r.short_name ?? 'Shuttle Route'),
       color: color || 'var(--green-fill)',
-      stops: r.stops || [],
+      stops: Array.isArray(r.stops) ? r.stops.map(String) : [],
     };
   }).filter((r) => r.id && r.name);
 }

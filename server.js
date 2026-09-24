@@ -22,9 +22,33 @@ const BPT_API_BASE = 'https://api.peaktransit.com/v5/index.php?app_id=_RIDER&key
 async function fallbackPeakTransitLocal(endpoint, query) {
   try {
     if (endpoint === 'routes') {
-      const res = await fetch(`${BPT_API_BASE}&controller=route2&action=list`, { headers: SPOOFED_HEADERS });
-      if (res.ok) {
-        const json = await res.json();
+      const [routesRes, routeStopsRes] = await Promise.all([
+        fetch(`${BPT_API_BASE}&controller=route2&action=list`, { headers: SPOOFED_HEADERS }),
+        fetch(`${BPT_API_BASE}&controller=routestop2&action=list`, { headers: SPOOFED_HEADERS }),
+      ]);
+      if (routesRes.ok) {
+        const json = await routesRes.json();
+        const routeStopsJson = routeStopsRes.ok ? await routeStopsRes.json() : { routeStops: [] };
+
+        const routeStopsByRoute = new Map();
+        for (const rs of (routeStopsJson.routeStops || [])) {
+          if (!rs.disabled) {
+            const rId = String(rs.routeID);
+            if (!routeStopsByRoute.has(rId)) routeStopsByRoute.set(rId, []);
+            routeStopsByRoute.get(rId).push(rs);
+          }
+        }
+
+        const routeStopsMap = new Map();
+        for (const [rId, rsList] of routeStopsByRoute.entries()) {
+          rsList.sort((a, b) => {
+            const orderA = Number(a.sortOrder ?? a.sequence ?? a.routeStopID ?? 0);
+            const orderB = Number(b.sortOrder ?? b.sequence ?? b.routeStopID ?? 0);
+            return orderA - orderB;
+          });
+          routeStopsMap.set(rId, rsList.map((rs) => String(rs.stopID)));
+        }
+
         const routes = (json.routes || [])
           .map((r) => ({
             id: r.routeID,
@@ -33,6 +57,7 @@ async function fallbackPeakTransitLocal(endpoint, query) {
             name: r.longName || r.shortName,
             route_name: r.longName || r.shortName,
             color: r.color ? `#${r.color}` : '#00563b',
+            stops: routeStopsMap.get(String(r.routeID)) || [],
             hidden: r.hidden,
             disabled: r.disabled,
           }))
@@ -96,20 +121,26 @@ async function fallbackPeakTransitLocal(endpoint, query) {
               const min = Math.max(0, Math.round((item.ETA1 - nowSec) / 60));
               predictions.push({
                 routeName: routeInfo.name,
+                routeId: String(item.routeID),
+                stopId: String(item.stopID),
                 min,
                 eta: new Date(item.ETA1 * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
                 vehicle: String(item.vehicleID || item.busID || ''),
                 color: routeInfo.color,
+                timestamp: item.ETA1,
               });
             }
             if (item.ETA2 && item.ETA2 > nowSec) {
               const min = Math.max(0, Math.round((item.ETA2 - nowSec) / 60));
               predictions.push({
                 routeName: routeInfo.name,
+                routeId: String(item.routeID),
+                stopId: String(item.stopID),
                 min,
                 eta: new Date(item.ETA2 * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
                 vehicle: String(item.vehicleID || item.busID || ''),
                 color: routeInfo.color,
+                timestamp: item.ETA2,
               });
             }
           }
@@ -131,13 +162,23 @@ async function fallbackPeakTransitLocal(endpoint, query) {
         const etaJson = await etaRes.json();
         const nowSec = Math.floor(Date.now() / 1000);
 
-        const routeStopsMap = new Map();
+        const routeStopsByRoute = new Map();
         for (const rs of (routeStopsJson.routeStops || [])) {
           if (!rs.disabled) {
             const rId = String(rs.routeID);
-            if (!routeStopsMap.has(rId)) routeStopsMap.set(rId, []);
-            routeStopsMap.get(rId).push(Number(rs.stopID));
+            if (!routeStopsByRoute.has(rId)) routeStopsByRoute.set(rId, []);
+            routeStopsByRoute.get(rId).push(rs);
           }
+        }
+
+        const routeStopsMap = new Map();
+        for (const [rId, rsList] of routeStopsByRoute.entries()) {
+          rsList.sort((a, b) => {
+            const orderA = Number(a.sortOrder ?? a.sequence ?? a.routeStopID ?? 0);
+            const orderB = Number(b.sortOrder ?? b.sequence ?? b.routeStopID ?? 0);
+            return orderA - orderB;
+          });
+          routeStopsMap.set(rId, rsList.map((rs) => String(rs.stopID)));
         }
 
         const stopEtasMap = new Map();

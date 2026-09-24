@@ -1,8 +1,19 @@
 // Campus bus (UVM CATS). Live data comes from Peak Transit API via Supabase Edge Function proxy.
 import { SUPABASE_URL } from '../config.js';
+import { getProfile, saveProfile } from './db.js';
 
 export const DEFAULT_WALK = 5;
 export const BACKUP_WINDOW = 20;
+
+// In-memory cache constants
+const STATIC_CACHE_TTL = 15 * 60 * 1000; // 15 minutes
+const PREDICTIONS_CACHE_TTL = 20 * 1000; // 20 seconds
+
+const _cache = {
+  routes: new Map(),
+  stops: new Map(),
+  predictions: new Map(),
+};
 
 const PROXY_BASE = `${SUPABASE_URL}/functions/v1/bus`;
 
@@ -317,6 +328,7 @@ export function planTrip(feed, { from, to } = {}) {
             vehicle: String(etaItem.vehicle || ''),
             eta: String(etaItem.eta || `${busIn}m`),
             arriveEta: arriveTime,
+            min: busIn,
             busIn,
             leaveIn,
             arriveIn,
@@ -331,11 +343,8 @@ export function planTrip(feed, { from, to } = {}) {
     }
   }
 
-  // Sort by earliest arrival time, then by earliest departure
-  return trips.sort((a, b) => {
-    if (a.arriveIn !== b.arriveIn) return a.arriveIn - b.arriveIn;
-    return a.leaveIn - b.leaveIn;
-  });
+  // Enforce ascending sort order (a.min - b.min) so the soonest arriving shuttle is always best
+  return trips.sort((a, b) => a.min - b.min);
 }
 
 /**
@@ -346,13 +355,8 @@ export function pickTwo(trips = []) {
     return { best: null, backup: null };
   }
 
-  const viable = trips.filter((t) => t.leaveIn >= -1);
-  const candidates = viable.length > 0 ? viable : trips;
-
-  const sorted = [...candidates].sort((a, b) => {
-    if (a.arriveIn !== b.arriveIn) return a.arriveIn - b.arriveIn;
-    return a.leaveIn - b.leaveIn;
-  });
+  // Enforce ascending sort order (a.min - b.min) so the soonest arriving shuttle is always best
+  const sorted = [...trips].sort((a, b) => a.min - b.min);
 
   const best = sorted[0] || null;
   if (!best) return { best: null, backup: null };
@@ -360,7 +364,7 @@ export function pickTwo(trips = []) {
   let backup = null;
   for (let i = 1; i < sorted.length; i++) {
     const candidate = sorted[i];
-    const diff = candidate.leaveIn - best.leaveIn;
+    const diff = candidate.min - best.min;
     if (diff >= 0 && diff <= BACKUP_WINDOW) {
       backup = candidate;
       break;
@@ -369,7 +373,7 @@ export function pickTwo(trips = []) {
 
   if (!backup && sorted.length > 1) {
     const second = sorted[1];
-    if (second.leaveIn - best.leaveIn <= BACKUP_WINDOW + 10) {
+    if (second.min - best.min <= BACKUP_WINDOW + 10) {
       backup = second;
     }
   }
@@ -382,12 +386,18 @@ export function pickTwo(trips = []) {
 // -------------------------------------------------------------
 
 export async function fetchRoutes(params = {}) {
+  const cacheKey = JSON.stringify(params || {});
+  const cached = _cache.routes.get(cacheKey);
+  if (cached && (Date.now() - cached.time < STATIC_CACHE_TTL)) {
+    return cached.data;
+  }
+
   const res = await callProxy('routes', params);
   if (!res) return [];
   const raw = Array.isArray(res) ? res : (res.routes || res.data || []);
   if (!Array.isArray(raw)) return [];
 
-  return raw.map((r) => {
+  const result = raw.map((r) => {
     let color = r.color || r.route_color || r.routeColor || '';
     if (color && !color.startsWith('#') && !color.startsWith('var(')) {
       color = `#${color}`;
@@ -399,16 +409,25 @@ export async function fetchRoutes(params = {}) {
       stops: Array.isArray(r.stops) ? r.stops.map(String) : [],
     };
   }).filter((r) => r.id && r.name);
+
+  _cache.routes.set(cacheKey, { data: result, time: Date.now() });
+  return result;
 }
 
 export async function fetchStops(routeId = null, params = {}) {
+  const cacheKey = `${routeId ?? 'all'}:${JSON.stringify(params || {})}`;
+  const cached = _cache.stops.get(cacheKey);
+  if (cached && (Date.now() - cached.time < STATIC_CACHE_TTL)) {
+    return cached.data;
+  }
+
   const query = routeId ? { route_id: String(routeId), ...params } : params;
   const res = await callProxy('stops', query);
   if (!res) return [];
   const raw = Array.isArray(res) ? res : (res.stops || res.data || []);
   if (!Array.isArray(raw)) return [];
 
-  return raw.map((s) => ({
+  const result = raw.map((s) => ({
     id: String(s.id ?? s.stop_id ?? s.stopID ?? ''),
     name: String(s.name ?? s.stop_name ?? s.stopName ?? s.title ?? 'Bus Stop'),
     code: String(s.code ?? s.stop_code ?? s.stopCode ?? ''),
@@ -416,16 +435,28 @@ export async function fetchStops(routeId = null, params = {}) {
     lng: s.lng,
     lon: s.lng,
   })).filter((s) => s.id && s.name);
+
+  _cache.stops.set(cacheKey, { data: result, time: Date.now() });
+  return result;
 }
 
 export async function fetchPredictions(stopId = null, params = {}) {
+  const cacheKey = `${stopId ?? 'all'}:${JSON.stringify(params || {})}`;
+  const cached = _cache.predictions.get(cacheKey);
+  if (cached && (Date.now() - cached.time < PREDICTIONS_CACHE_TTL)) {
+    return cached.data;
+  }
+
   const query = stopId ? { stop_id: String(stopId), ...params } : params;
   const res = await callProxy('predictions', query);
   if (!res) return [];
   const raw = Array.isArray(res) ? res : (res.predictions || res.arrivals || res.data || []);
   if (!Array.isArray(raw)) return [];
 
-  return raw.map((p) => {
+  const cachedRoutes = _cache.routes.get('{}')?.data || [];
+  const routeMap = new Map(cachedRoutes.map((r) => [String(r.id), r]));
+
+  const result = raw.map((p) => {
     const rawMin = p.eta_minutes ?? p.minutes ?? p.min;
     let min = Number(rawMin);
     if (isNaN(min) || min < 0) {
@@ -439,14 +470,17 @@ export async function fetchPredictions(stopId = null, params = {}) {
       min = Math.round(min);
     }
 
-    let color = p.color || p.route_color || p.routeColor || '';
+    const rId = String(p.routeId ?? p.route_id ?? '');
+    const matched = routeMap.get(rId);
+
+    let color = p.color || p.route_color || p.routeColor || matched?.color || '';
     if (color && !color.startsWith('#') && !color.startsWith('var(')) {
       color = `#${color}`;
     }
 
     return {
-      routeName: String(p.routeName ?? p.route_name ?? p.route ?? p.name ?? 'Shuttle'),
-      routeId: String(p.routeId ?? p.route_id ?? ''),
+      routeName: String(p.routeName ?? p.route_name ?? p.route ?? matched?.name ?? 'Shuttle'),
+      routeId: rId,
       stopId: String(p.stopId ?? p.stop_id ?? stopId ?? ''),
       min,
       eta: String(p.eta ?? p.arrival_time ?? p.time ?? ''),
@@ -454,8 +488,38 @@ export async function fetchPredictions(stopId = null, params = {}) {
       color: color || 'var(--green-fill)',
     };
   }).sort((a, b) => a.min - b.min);
+
+  _cache.predictions.set(cacheKey, { data: result, time: Date.now() });
+  return result;
 }
 
 export const getRoutes = fetchRoutes;
 export const getStops = fetchStops;
 export const getPredictions = fetchPredictions;
+
+/**
+ * Helpers for watching a specific bus trip from Pip's Pond
+ * Stored under profile.busWatch
+ */
+export async function getWatchedTrip() {
+  const profile = await getProfile();
+  return profile?.busWatch || null;
+}
+
+export async function saveWatchedTrip(tripData) {
+  if (!tripData) {
+    await saveProfile({ busWatch: null });
+    return null;
+  }
+  const watched = {
+    routeId: String(tripData.routeId ?? ''),
+    routeName: String(tripData.routeName ?? ''),
+    fromStopId: String(tripData.fromStopId ?? ''),
+    fromStopName: String(tripData.fromStopName ?? ''),
+    toStopId: String(tripData.toStopId ?? ''),
+    toStopName: String(tripData.toStopName ?? ''),
+    color: tripData.color || 'var(--green-fill)',
+  };
+  await saveProfile({ busWatch: watched });
+  return watched;
+}

@@ -86,14 +86,10 @@ Deno.serve(async (req: Request) => {
       const routes = (routesJson.routes || [])
         .filter((r: any) => !r.hidden && !r.disabled)
         .map((r: any) => ({
-          id: r.routeID,
-          route_id: r.routeID,
-          routeID: r.routeID,
+          id: String(r.routeID),
           name: r.longName || r.shortName,
-          route_name: r.longName || r.shortName,
           color: r.color ? (r.color.startsWith('#') ? r.color : `#${r.color}`) : '#00563b',
           stops: routeStopsMap.get(String(r.routeID)) || [],
-          sequence: r.sequence,
         }));
 
       return reply({ routes });
@@ -101,88 +97,61 @@ Deno.serve(async (req: Request) => {
 
     // 2. Stops
     if (subpath === 'stops') {
-      const routeId = params.get('route_id') || params.get('routeId');
-      const [stopsRes, routeStopsRes] = await Promise.all([
-        fetch(`${BPT_API_BASE}&controller=stop2&action=list`, { headers: SPOOFED_HEADERS }),
-        fetch(`${BPT_API_BASE}&controller=routestop2&action=list`, { headers: SPOOFED_HEADERS }),
-      ]);
+      const stopsRes = await fetch(`${BPT_API_BASE}&controller=stop2&action=list`, { headers: SPOOFED_HEADERS });
 
       if (!stopsRes.ok) {
         throw new Error(`Peak Transit stops error: ${stopsRes.statusText}`);
       }
 
       const stopsJson = await stopsRes.json();
-      const routeStopsJson = routeStopsRes.ok ? await routeStopsRes.json() : { routeStops: [] };
       const allStops = stopsJson.stop || [];
-      const routeStops = routeStopsJson.routeStops || [];
-
-      const validStopIds = new Set<number>();
-      if (routeId) {
-        routeStops
-          .filter((rs: any) => String(rs.routeID) === String(routeId) && !rs.disabled)
-          .forEach((rs: any) => validStopIds.add(Number(rs.stopID)));
-      }
 
       const stops = allStops
-        .filter((s: any) => (!routeId || validStopIds.has(Number(s.stopID))) && !s.disabled && !s.hidden)
+        .filter((s: any) => !s.disabled && !s.hidden)
         .map((s: any) => ({
-          id: s.stopID,
-          stop_id: s.stopID,
-          stopID: s.stopID,
+          id: String(s.stopID),
           name: s.longName || s.shortName || 'Bus Stop',
-          stop_name: s.longName || s.shortName || 'Bus Stop',
           code: s.stopCode || '',
           lat: s.lat,
           lng: s.lng,
-          lon: s.lng,
         }))
         .sort((a: any, b: any) => a.name.localeCompare(b.name));
 
       return reply({ stops });
     }
 
-    // 3. Predictions / ETAs
+    // 3. Predictions / ETAs (Optimized for speed: fetch only eta controller)
     if (subpath === 'predictions' || subpath === 'eta') {
       const stopId = params.get('stop_id') || params.get('stopId');
-      const [etaRes, routesRes] = await Promise.all([
-        fetch(`${BPT_API_BASE}&controller=eta&action=list`, { headers: SPOOFED_HEADERS }),
-        fetch(`${BPT_API_BASE}&controller=route2&action=list`, { headers: SPOOFED_HEADERS }),
-      ]);
+      const etaRes = await fetch(`${BPT_API_BASE}&controller=eta&action=list`, { headers: SPOOFED_HEADERS });
 
       if (!etaRes.ok) {
         throw new Error(`Peak Transit eta error: ${etaRes.statusText}`);
       }
 
       const etaJson = await etaRes.json();
-      const routesJson = routesRes.ok ? await routesRes.json() : { routes: [] };
-      const routeMap = new Map();
-      (routesJson.routes || []).forEach((r: any) => {
-        routeMap.set(String(r.routeID), {
-          name: r.longName || r.shortName,
-          color: r.color ? (r.color.startsWith('#') ? r.color : `#${r.color}`) : '#00563b',
-        });
-      });
-
       const stopsEta = etaJson.stop || [];
       const predictions: any[] = [];
       const nowSec = Math.floor(Date.now() / 1000);
 
       for (const item of stopsEta) {
+        // Discard any ETA where vehicleID and busID are falsy
+        const vehicle = item.vehicleID ?? item.busID;
+        if (!vehicle || String(vehicle).trim() === '') {
+          continue;
+        }
+
         if (!stopId || String(item.stopID) === String(stopId)) {
-          const routeInfo = routeMap.get(String(item.routeID)) || { name: 'Shuttle', color: 'var(--green-fill)' };
           for (const etaKey of ['ETA1', 'ETA2']) {
             const ts = item[etaKey];
             if (ts && ts > nowSec) {
               const min = Math.max(0, Math.round((ts - nowSec) / 60));
               predictions.push({
-                routeName: routeInfo.name,
                 routeId: String(item.routeID),
                 stopId: String(item.stopID),
                 min,
-                eta: new Date(ts * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
-                vehicle: String(item.vehicleID || item.busID || ''),
-                color: routeInfo.color,
-                timestamp: ts,
+                eta: new Date(ts * 1000).toLocaleTimeString([], { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }),
+                vehicle: String(vehicle),
               });
             }
           }
@@ -235,6 +204,12 @@ Deno.serve(async (req: Request) => {
       const routeEtasMap = new Map<string, Map<number, any[]>>();
 
       for (const item of (etaJson.stop || [])) {
+        // Ghost buses: ignore and omit entries lacking physical vehicle ID
+        const vehicle = item.vehicleID ?? item.busID;
+        if (vehicle === null || vehicle === undefined || String(vehicle).trim() === '') {
+          continue;
+        }
+
         const sId = Number(item.stopID);
         const rId = String(item.routeID);
         if (!stopEtasMap.has(sId)) stopEtasMap.set(sId, []);
@@ -249,8 +224,8 @@ Deno.serve(async (req: Request) => {
               routeId: rId,
               stopId: sId,
               min,
-              eta: new Date(ts * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
-              vehicle: String(item.vehicleID || item.busID || ''),
+              eta: new Date(ts * 1000).toLocaleTimeString([], { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }),
+              vehicle: String(vehicle),
               timestamp: ts,
             };
             stopEtasMap.get(sId)!.push(entry);

@@ -18,6 +18,7 @@ import { studyOverride, getStudy, studyStatus, liveTasks } from '../data/study.j
 import { reviewStreak, totalDue } from '../data/decks.js';
 import { studyPeekHTML } from './study.js';
 import { getWeather, campusOf, codeInfo } from '../core/weather.js';
+import { fetchPredictions } from '../data/bus.js';
 
 // One-time card nudging local-only users to make an account (for sync + friends + reminders).
 function signinNudgeHTML(profile) {
@@ -178,6 +179,67 @@ async function fillPondWeather(root, profile) {
   el.hidden = false;
 }
 
+// Fills the watched bus arrival blurb if active. Stays hidden if no watch or if request fails.
+async function fillBusPeek(root, profile) {
+  const el = root.querySelector('#pond-bus-peek');
+  if (!el) return;
+
+  const watched = profile?.busWatch;
+  if (!watched || !watched.fromStopId) {
+    el.hidden = true;
+    return;
+  }
+
+  try {
+    const timeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Bus peek timeout')), 3500)
+    );
+    const preds = await Promise.race([
+      fetchPredictions(watched.fromStopId),
+      timeout,
+    ]);
+
+    if (root.querySelector('#pond-bus-peek') !== el) return; // navigated away
+
+    const matching = (preds || []).filter((p) => {
+      if (watched.routeId && p.routeId) {
+        return String(p.routeId) === String(watched.routeId);
+      }
+      return true;
+    });
+
+    const soonest = matching.length > 0 ? matching[0] : null;
+    if (!soonest) {
+      el.hidden = true;
+      return;
+    }
+
+    const routeName = watched.routeName || soonest?.routeName || 'Shuttle';
+    const originStop = watched.fromStopName || 'Stop';
+    const color = watched.color || soonest?.color || 'var(--green-fill)';
+    const etaText = soonest.min === 0 ? 'Arriving now' : `Arriving in ${soonest.min} min`;
+
+    el.innerHTML = `
+      <a href="#/bus" class="bus-peek__link">
+        <span class="bus-peek__icon">🚌</span>
+        <div class="bus-peek__info">
+          <div class="bus-peek__route">
+            <span class="bus-peek__badge" style="background: ${esc(color)};"></span>
+            <b>${esc(routeName)}</b>
+            <span class="bus-peek__stop">· ${esc(originStop)}</span>
+          </div>
+          <div class="bus-peek__eta">${esc(etaText)}</div>
+        </div>
+        <span class="bus-peek__arrow">›</span>
+      </a>`;
+    el.hidden = false;
+  } catch {
+    if (root.querySelector('#pond-bus-peek') === el) {
+      el.hidden = true;
+    }
+  }
+}
+
 const LEAVES = Array.from({ length: 10 }, (_, i) =>
   `<span class="leaf" style="--x:${(i * 37) % 100}%;--d:${(i % 5) * 0.18}s;--r:${(i * 53) % 360}deg" aria-hidden="true"></span>`).join('');
 
@@ -231,6 +293,7 @@ export async function renderPond(root) {
       </section>
       ${pingsHTML()}
       ${studyPeekHTML(today)}
+      <div class="bus-peek" id="pond-bus-peek" hidden></div>
       ${signinNudgeHTML(profile)}
       ${recapHTML(settings, entries, b, profile)}
       ${finalsHTML(b)}
@@ -294,6 +357,7 @@ export async function renderPond(root) {
   });
 
   fillPondWeather(root, profile);
+  fillBusPeek(root, profile);
 
   // Re-render the pond when friend pings arrive (while it's the open page).
   if (!renderPond._pingWired) {

@@ -82,66 +82,43 @@ async function fallbackPeakTransitLocal(endpoint, query) {
             .forEach((rs) => validStopIds.add(rs.stopID));
         }
         const filteredStops = allStops
-          .filter((s) => (!routeId || validStopIds.has(s.stopID)) && !s.disabled && !s.hidden)
+          .filter((s) => !s.disabled && !s.hidden)
           .map((s) => ({
-            id: s.stopID,
-            stop_id: s.stopID,
-            stopID: s.stopID,
+            id: String(s.stopID),
             name: s.longName || s.shortName || 'Bus Stop',
-            stop_name: s.longName || s.shortName || 'Bus Stop',
             code: s.stopCode || '',
             lat: s.lat,
             lng: s.lng,
-          }));
+          }))
+          .sort((a, b) => a.name.localeCompare(b.name));
         return { stops: filteredStops };
       }
     } else if (endpoint === 'predictions' || endpoint === 'eta') {
       const stopId = query.stop_id || query.stopId;
-      const [etaRes, routesRes] = await Promise.all([
-        fetch(`${BPT_API_BASE}&controller=eta&action=list`, { headers: SPOOFED_HEADERS }),
-        fetch(`${BPT_API_BASE}&controller=route2&action=list`, { headers: SPOOFED_HEADERS }),
-      ]);
+      const etaRes = await fetch(`${BPT_API_BASE}&controller=eta&action=list`, { headers: SPOOFED_HEADERS });
       if (etaRes.ok) {
         const etaJson = await etaRes.json();
-        const routesJson = routesRes.ok ? await routesRes.json() : { routes: [] };
-        const routeMap = new Map();
-        (routesJson.routes || []).forEach((r) => {
-          routeMap.set(String(r.routeID), {
-            name: r.longName || r.shortName,
-            color: r.color ? `#${r.color}` : '#00563b',
-          });
-        });
         const stopsEta = etaJson.stop || [];
         const predictions = [];
         const nowSec = Math.floor(Date.now() / 1000);
         for (const item of stopsEta) {
+          const vehicle = item.vehicleID ?? item.busID;
+          if (!vehicle || String(vehicle).trim() === '') {
+            continue;
+          }
           if (!stopId || String(item.stopID) === String(stopId)) {
-            const routeInfo = routeMap.get(String(item.routeID)) || { name: 'Shuttle', color: 'var(--green-fill)' };
-            if (item.ETA1 && item.ETA1 > nowSec) {
-              const min = Math.max(0, Math.round((item.ETA1 - nowSec) / 60));
-              predictions.push({
-                routeName: routeInfo.name,
-                routeId: String(item.routeID),
-                stopId: String(item.stopID),
-                min,
-                eta: new Date(item.ETA1 * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
-                vehicle: String(item.vehicleID || item.busID || ''),
-                color: routeInfo.color,
-                timestamp: item.ETA1,
-              });
-            }
-            if (item.ETA2 && item.ETA2 > nowSec) {
-              const min = Math.max(0, Math.round((item.ETA2 - nowSec) / 60));
-              predictions.push({
-                routeName: routeInfo.name,
-                routeId: String(item.routeID),
-                stopId: String(item.stopID),
-                min,
-                eta: new Date(item.ETA2 * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
-                vehicle: String(item.vehicleID || item.busID || ''),
-                color: routeInfo.color,
-                timestamp: item.ETA2,
-              });
+            for (const etaProp of ['ETA1', 'ETA2']) {
+              const ts = item[etaProp];
+              if (ts && ts > nowSec) {
+                const min = Math.max(0, Math.round((ts - nowSec) / 60));
+                predictions.push({
+                  routeId: String(item.routeID),
+                  stopId: String(item.stopID),
+                  min,
+                  eta: new Date(ts * 1000).toLocaleTimeString([], { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }),
+                  vehicle: String(vehicle),
+                });
+              }
             }
           }
         }
@@ -184,6 +161,10 @@ async function fallbackPeakTransitLocal(endpoint, query) {
         const stopEtasMap = new Map();
         const routeEtasMap = new Map();
         for (const item of (etaJson.stop || [])) {
+          const vehicle = item.vehicleID ?? item.busID;
+          if (vehicle === null || vehicle === undefined || String(vehicle).trim() === '') {
+            continue;
+          }
           const sId = Number(item.stopID);
           const rId = String(item.routeID);
           if (!stopEtasMap.has(sId)) stopEtasMap.set(sId, []);
@@ -198,8 +179,8 @@ async function fallbackPeakTransitLocal(endpoint, query) {
                 routeId: rId,
                 stopId: sId,
                 min,
-                eta: new Date(ts * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
-                vehicle: String(item.vehicleID || item.busID || ''),
+                eta: new Date(ts * 1000).toLocaleTimeString([], { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }),
+                vehicle: String(vehicle),
                 timestamp: ts,
               };
               stopEtasMap.get(sId).push(entry);

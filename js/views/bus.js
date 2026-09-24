@@ -1,6 +1,7 @@
 // Campus Bus Tracker: A-to-B trip planner for UVM CATS shuttles.
-import { loadBus, planTrip, pickTwo, fetchRoutes } from '../data/bus.js';
+import { loadBus, planTrip, pickTwo, fetchRoutes, getWatchedTrip, saveWatchedTrip } from '../data/bus.js';
 import { esc } from '../ui/dom.js';
+import { toast } from '../ui/toast.js';
 
 const STORAGE_FROM = 'pips:bus:from';
 const STORAGE_TO = 'pips:bus:to';
@@ -9,6 +10,7 @@ const state = {
   feed: null,
   startStopId: '',
   endStopId: '',
+  watchedTrip: null,
   loading: false,
   error: null,
   timer: null,
@@ -133,6 +135,22 @@ function renderUI() {
   const { best, backup } = pickTwo(trips);
   const remainingTrips = trips.filter((t) => t !== best && t !== backup);
 
+  const isWatching = Boolean(
+    state.watchedTrip &&
+    String(state.watchedTrip.fromStopId) === String(startStopId) &&
+    String(state.watchedTrip.toStopId) === String(endStopId)
+  );
+
+  state.currentTripData = (startStopId && endStopId && isConnected) ? {
+    routeId: best?.route?.id || matchingRoutes[0]?.id || '',
+    routeName: best?.routeName || matchingRoutes[0]?.name || 'Shuttle',
+    fromStopId: String(startStopId),
+    fromStopName: startStop?.name || 'Start Stop',
+    toStopId: String(endStopId),
+    toStopName: endStop?.name || 'End Stop',
+    color: best?.routeColor || matchingRoutes[0]?.color || 'var(--green-fill)',
+  } : null;
+
   // Quick preset chips that match actual stops in this feed
   const presetChips = POPULAR_STOPS.map((p) => {
     const found = stops.find((s) => p.match.test(s.name));
@@ -214,6 +232,14 @@ function renderUI() {
 
       <!-- Trip Results Section -->
       <section class="stack">
+        ${startStopId && endStopId && startStopId !== endStopId && (best || isConnected) ? `
+          <div style="display: flex; justify-content: flex-end; margin-bottom: 2px;">
+            <button type="button" class="btn-sketch" data-action="toggle-watch" style="font-size: 14px; padding: 6px 14px; ${isWatching ? 'background: var(--yellow-note); border-color: var(--ink); font-weight: 800;' : ''}">
+              ${isWatching ? 'Watching ✓' : '⭐ Watch this trip'}
+            </button>
+          </div>
+        ` : ''}
+
         ${loading && !feed ? `
           <div class="card bus-result">
             <p class="hand">Finding shuttles…</p>
@@ -243,6 +269,15 @@ function renderUI() {
               No active campus shuttle connects <b>${esc(startStop?.name || 'origin')}</b> directly to <b>${esc(endStop?.name || 'destination')}</b> in this direction.
             </p>
             <p class="card__hint">Try swapping direction or picking another stop.</p>
+          </div>
+        ` : ''}
+
+        <!-- Watch This Trip Toggle -->
+        ${(best || isConnected) ? `
+          <div style="margin-bottom: 2px;">
+            <button type="button" class="btn-sketch" data-action="toggle-watch" style="width: 100%; font-size: 15px; font-weight: 800; padding: 10px 14px; background: ${isWatching ? 'var(--yellow-note)' : 'var(--card)'}; border-color: var(--ink); display: flex; align-items: center; justify-content: center; gap: 8px; box-shadow: 0 2px 0 var(--ink);">
+              ${isWatching ? '⭐ Watching ✓' : '⭐ Watch this trip'}
+            </button>
           </div>
         ` : ''}
 
@@ -334,7 +369,7 @@ function attachHandlers() {
     renderUI();
   });
 
-  currentRoot.addEventListener('click', (e) => {
+  currentRoot.addEventListener('click', async (e) => {
     // Swap origin and destination
     if (e.target.closest('[data-action="swap"]')) {
       const temp = state.startStopId;
@@ -348,6 +383,48 @@ function attachHandlers() {
     // Refresh live predictions
     if (e.target.closest('[data-action="refresh"]')) {
       loadData(false);
+      return;
+    }
+
+    // Toggle watch this trip
+    if (e.target.closest('[data-action="toggle-watch"]')) {
+      const isWatching = Boolean(
+        state.watchedTrip &&
+        String(state.watchedTrip.fromStopId) === String(state.startStopId) &&
+        String(state.watchedTrip.toStopId) === String(state.endStopId)
+      );
+
+      if (isWatching) {
+        await saveWatchedTrip(null);
+        state.watchedTrip = null;
+        toast('Stopped watching trip');
+      } else {
+        const { feed, startStopId, endStopId } = state;
+        const stops = feed?.stops || [];
+        const startStop = stops.find((s) => String(s.id) === String(startStopId));
+        const endStop = stops.find((s) => String(s.id) === String(endStopId));
+        const trips = planTrip(feed, { from: startStopId, to: endStopId });
+        const { best } = pickTwo(trips);
+        const matchingRoute = (feed?.routes || []).find((r) => {
+          const rStops = (r.stops || []).map(String);
+          return rStops.includes(String(startStopId)) && rStops.includes(String(endStopId));
+        });
+
+        const startName = startStop?.name || 'Start';
+        const endName = endStop?.name || 'Destination';
+        const tripData = {
+          routeId: String(best?.route?.id || matchingRoute?.id || ''),
+          routeName: String(best?.routeName || matchingRoute?.name || 'Shuttle'),
+          fromStopId: String(startStopId),
+          fromStopName: startName,
+          toStopId: String(endStopId),
+          toStopName: endName,
+          color: best?.routeColor || matchingRoute?.color || 'var(--green-fill)',
+        };
+        state.watchedTrip = await saveWatchedTrip(tripData);
+        toast(`Watching ${startName} → ${endName} ⭐`);
+      }
+      renderUI();
       return;
     }
 
@@ -388,14 +465,21 @@ async function loadData(showFullLoading = true) {
 
     state.feed = feed;
     state.error = null;
+    state.watchedTrip = await getWatchedTrip();
 
     // Initialize default selections if not already chosen
     const stops = feed.stops || [];
     if (!state.startStopId || !state.endStopId) {
-      const { fromId, toId } = getSavedStops(stops, feed.routes);
-      state.startStopId = fromId;
-      state.endStopId = toId;
-      saveStops(fromId, toId);
+      if (state.watchedTrip?.fromStopId && state.watchedTrip?.toStopId) {
+        state.startStopId = state.watchedTrip.fromStopId;
+        state.endStopId = state.watchedTrip.toStopId;
+        saveStops(state.startStopId, state.endStopId);
+      } else {
+        const { fromId, toId } = getSavedStops(stops, feed.routes);
+        state.startStopId = fromId;
+        state.endStopId = toId;
+        saveStops(fromId, toId);
+      }
     }
   } catch (err) {
     console.error('[renderBus] Load error:', err);

@@ -226,6 +226,7 @@ export async function renderPond(root) {
       <section aria-label="${esc(name)}" class="pond-wrap">
         ${pondSceneHTML({ mood, name, outfit: outfitFor(today), button: true, extraClass: movingIn ? 'is-moving-in' : '', dancing, visitor })}
         ${movingIn ? `<div class="leaves" aria-hidden="true">${LEAVES}</div>` : ''}
+        <a href="#/bus" class="bus-bubble"><span class="bus-icon">🚌</span> Catch Bus</a>
         <p class="pip-says" aria-live="polite">“${esc(line)}”</p>
       </section>
       ${pingsHTML()}

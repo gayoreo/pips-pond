@@ -1,8 +1,13 @@
 // Bump VERSION whenever you add, rename or remove files.
-const VERSION = 'v15';
+const VERSION = 'v17';
 const CACHE = `pips-pond-${VERSION}`;
 const FONT_CACHE = 'pips-pond-fonts';
 const LIB_CACHE = 'pips-pond-libs';
+
+const KATEX_LIBS = [
+  'https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css',
+  'https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js',
+];
 
 const SHELL = [
   './', './index.html', './manifest.json',
@@ -26,6 +31,8 @@ self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE);
     await Promise.allSettled(SHELL.map((url) => cache.add(url)));
+    const libCache = await caches.open(LIB_CACHE);
+    await Promise.allSettled(KATEX_LIBS.map((url) => libCache.add(url)));
     await self.skipWaiting();
   })());
 });

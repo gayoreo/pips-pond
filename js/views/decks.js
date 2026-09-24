@@ -48,6 +48,37 @@ async function shrinkImage(file, max = 700, quality = 0.62) {
 const cardImg = (src, alt = '') => (src ? `<img class="card-img" src="${esc(src)}" alt="${esc(alt)}">` : '');
 const typeTag = (c) => (c.type && c.type !== 'basic' ? `<span class="dn-tag">${esc(c.type === 'cloze' ? 'blank' : 'multi')}</span>` : '');
 
+export function parseMath(text) {
+  if (!text) return '';
+  const str = String(text);
+  const parts = str.split(/(\$\$[\s\S]*?\$\$|\$(?:\\\$|[^\$])+?\$)/g);
+  return parts.map((part) => {
+    if (part.startsWith('$$') && part.endsWith('$$') && part.length >= 4) {
+      const math = part.slice(2, -2).trim();
+      if (typeof katex !== 'undefined') {
+        try {
+          return katex.renderToString(math, { throwOnError: false, displayMode: true });
+        } catch {
+          return esc(part);
+        }
+      }
+      return esc(part);
+    }
+    if (part.startsWith('$') && part.endsWith('$') && part.length >= 2) {
+      const math = part.slice(1, -1).trim();
+      if (typeof katex !== 'undefined') {
+        try {
+          return katex.renderToString(math, { throwOnError: false, displayMode: false });
+        } catch {
+          return esc(part);
+        }
+      }
+      return esc(part);
+    }
+    return esc(part);
+  }).join('');
+}
+
 const boxDots = (c) => `<span class="box-dots" aria-label="Learned ${c.box || 0} of ${MAX_BOX}">${Array.from({ length: MAX_BOX }, (_, i) => `<i class="${i < (c.box || 0) ? 'on' : ''}"></i>`).join('')}</span>`;
 
 // ---------- exam links ----------
@@ -143,8 +174,8 @@ export async function renderDeck(root) {
     ${deck.cards.length > 8 ? `<label class="field">Search<input type="search" data-search value="${esc(state.search)}" autocomplete="off"></label>` : ''}
     ${deck.cards.length ? `<ul class="card-list">${cards.map((c) => `
       <li><button type="button" class="card-row" data-card="${esc(c.id)}">
-        <span class="card-row__front">${c.img ? '📷 ' : ''}${esc(isCloze(c) ? clozePrompt(c.front) : c.front)} ${typeTag(c)}</span>
-        <span class="card-row__back">${esc(isCloze(c) ? clozeFilled(c.front) : c.back)}</span>
+        <span class="card-row__front">${c.img ? '📷 ' : ''}${parseMath(isCloze(c) ? clozePrompt(c.front) : c.front)} ${typeTag(c)}</span>
+        <span class="card-row__back">${parseMath(isCloze(c) ? clozeFilled(c.front) : c.back)}</span>
         ${boxDots(c)}
       </button></li>`).join('')}</ul>` : '<p class="card__hint">No cards yet. Tap "import a list" to paste a bunch at once.</p>'}
   </div>`;
@@ -543,8 +574,8 @@ export async function renderReview(root) {
     </div>
     <button type="button" class="flash${r.shown ? ' is-shown' : ''}" data-reveal aria-live="polite">
       ${cardImg(card.img)}
-      <span class="flash__front">${esc(face.ask)}</span>
-      ${r.shown ? `<span class="flash__back">${esc(face.reveal)}</span>` : '<span class="flash__hint">tap to show the answer</span>'}
+      <span class="flash__front">${parseMath(face.ask)}</span>
+      ${r.shown ? `<span class="flash__back">${parseMath(face.reveal)}</span>` : '<span class="flash__hint">tap to show the answer</span>'}
       ${!r.shown && card.type === 'multi' && face.answers.length > 1 ? `<span class="flash__hint">${face.answers.length} answers</span>` : ''}
     </button>
     ${r.shown ? `
@@ -599,7 +630,7 @@ export async function renderFlip(root) {
     <button type="button" class="flash flash--flip${showBack ? ' is-back' : ''}" data-flip>
       <span class="flash__side">${showBack ? 'back' : 'front'}</span>
       ${cardImg(card.img)}
-      <span class="flash__front">${esc(isCloze(card) ? (showBack ? clozeFilled(card.front) : clozePrompt(card.front)) : showBack ? card.back : card.front)}</span>
+      <span class="flash__front">${parseMath(isCloze(card) ? (showBack ? clozeFilled(card.front) : clozePrompt(card.front)) : showBack ? card.back : card.front)}</span>
       <span class="flash__hint">tap to flip</span>
     </button>
     <div class="grade">
@@ -751,7 +782,7 @@ export async function renderQuiz(root) {
       lines: [
         z.timed ? `${z.right} of ${total} in 60 seconds.${deck.bestLightning ? ` Best: ${deck.bestLightning}.` : ''}`
           : pct === 1 ? 'Perfect score!' : pct >= 0.8 ? 'Nice work.' : 'Keep at it. Retrying the missed ones helps a lot.',
-        missedCards.length ? `<ul class="missed-list">${missedCards.map((c) => `<li><b>${esc(isCloze(c) ? clozePrompt(c.front) : c.front)}</b> · ${esc(isCloze(c) ? clozeFilled(c.front) : c.back)}</li>`).join('')}</ul>` : '',
+        missedCards.length ? `<ul class="missed-list">${missedCards.map((c) => `<li><b>${parseMath(isCloze(c) ? clozePrompt(c.front) : c.front)}</b> · ${parseMath(isCloze(c) ? clozeFilled(c.front) : c.back)}</li>`).join('')}</ul>` : '',
       ],
       buttons: `
         ${missedCards.length ? `<button type="button" class="btn-sketch btn-sketch--go" data-retry>retry the ${missedCards.length} I missed</button>` : ''}
@@ -779,17 +810,17 @@ export async function renderQuiz(root) {
       <p class="eyebrow">${z.timed ? `<span class="quiz-timer" data-timer>${left}s</span> · ${z.right} right` : `${z.i + 1} of ${z.questions.length} · ${z.right} right`}</p>
       <span class="spacer"></span>
     </div>
-    <div class="flash flash--ask">${cardImg(q.img)}<span class="flash__front">${esc(q.ask)}</span>${q.note ? `<span class="flash__hint">${esc(q.note)}</span>` : ''}</div>
+    <div class="flash flash--ask">${cardImg(q.img)}<span class="flash__front">${parseMath(q.ask)}</span>${q.note ? `<span class="flash__hint">${esc(q.note)}</span>` : ''}</div>
     ${q.kind === 'choice' ? `
       <div class="choices">${q.options.map((o, n) => `
-        <button type="button" class="choice${a ? (o === q.answer ? ' is-right' : o === a.given ? ' is-wrong' : '') : ''}" data-choice="${n}"${a ? ' disabled' : ''}>${esc(o)}</button>`).join('')}
+        <button type="button" class="choice${a ? (o === q.answer ? ' is-right' : o === a.given ? ' is-wrong' : '') : ''}" data-choice="${n}"${a ? ' disabled' : ''}>${parseMath(o)}</button>`).join('')}
       </div>` : `
       <form class="typed" data-typed>
         <input name="answer" autocomplete="off" autocapitalize="off" spellcheck="false" ${a ? `value="${esc(a.given)}" disabled` : ''} placeholder="Type the answer">
         ${a ? '' : '<button type="submit" class="btn-sketch btn-sketch--go">check</button>'}
       </form>`}
     ${a && !z.timed ? `
-      <p class="quiz-feedback ${a.ok ? 'is-right' : 'is-wrong'}">${a.ok ? 'Right!' : `Not quite. It's <b>${esc(q.answer)}</b>.`}</p>
+      <p class="quiz-feedback ${a.ok ? 'is-right' : 'is-wrong'}">${a.ok ? 'Right!' : `Not quite. It's <b>${parseMath(q.answer)}</b>.`}</p>
       <div class="grade">
         ${!a.ok && q.kind === 'type' ? '<button type="button" class="btn-sketch" data-override>I was right</button>' : ''}
         <button type="button" class="btn-sketch btn-sketch--go" data-next>${z.i + 1 < z.questions.length ? 'next' : 'see score'}</button>
@@ -872,8 +903,8 @@ function renderMatch(root, deck, z) {
       <span class="spacer"></span>
     </div>
     <div class="match">
-      <div class="match__col">${b.left.map((x) => `<button type="button" class="${cls('L', x.id)}" data-ml="${esc(x.id)}"${b.done.includes(x.id) ? ' disabled' : ''}>${esc(x.text)}</button>`).join('')}</div>
-      <div class="match__col">${b.right.map((x) => `<button type="button" class="${cls('R', x.id)}" data-mr="${esc(x.id)}"${b.done.includes(x.id) ? ' disabled' : ''}>${esc(x.text)}</button>`).join('')}</div>
+      <div class="match__col">${b.left.map((x) => `<button type="button" class="${cls('L', x.id)}" data-ml="${esc(x.id)}"${b.done.includes(x.id) ? ' disabled' : ''}>${parseMath(x.text)}</button>`).join('')}</div>
+      <div class="match__col">${b.right.map((x) => `<button type="button" class="${cls('R', x.id)}" data-mr="${esc(x.id)}"${b.done.includes(x.id) ? ' disabled' : ''}>${parseMath(x.text)}</button>`).join('')}</div>
     </div>
   </div>`;
   root.querySelector('.match').addEventListener('click', (e) => {

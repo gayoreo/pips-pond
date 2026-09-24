@@ -87,7 +87,7 @@ function todayScheduleHTML(s, today) {
   <section class="today-sched" aria-label="Today's schedule">
     <div class="today-sched__head">
       <p class="today-sched__title">Today</p>
-      <span class="row">${canOut ? '<button type="button" class="btn-plain today-sched__out" data-out-of-class>I’m out of class</button>' : ''}<a class="btn-plain today-sched__out" href="#/bus">🚌 bus</a></span>
+      ${canOut ? '<button type="button" class="btn-plain today-sched__out" data-out-of-class>I’m out of class</button>' : ''}
     </div>
     ${off ? `<p class="today-sched__off">🌴 ${esc(off.label || 'Break')} · no classes today</p>` : ''}
     <ul>${items.map((i) => {

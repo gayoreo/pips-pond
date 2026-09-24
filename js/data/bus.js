@@ -1,51 +1,133 @@
-// Campus bus (UVM CATS). Live data comes from UVM's bus map, which runs on Peak Transit.
-// fetchFeed() is the one piece still to fill in once we've seen how that map loads its data.
-// Everything else works on this tidy shape:
-//   stops:    [{ id, name, lat, lon }]
-//   routes:   [{ id, name, color, stops: [stopId, ...] in driving order, loop: true|false }]
-//   vehicles: [{ id, routeId, lat, lon }]
-//   arrivals: [{ stopId, routeId, vehicleId, min }]   optional: predicted minutes until a bus reaches a stop.
-//             Without them, arrivals are estimated from where each bus is on its route.
-const CACHE_KEY = 'pips-pond:bus-static';
+// Campus bus (UVM CATS). Live data comes from UVM's Peak Transit API via Supabase Edge Function proxy.
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from '../config.js';
 
+// Base endpoints for proxy
+const SUPABASE_PROXY_URL = SUPABASE_URL ? `${SUPABASE_URL}/functions/v1/bus` : null;
+const LOCAL_PROXY_URL = '/api/bus';
+
+const CACHE_KEY = 'pips-pond:bus-static';
 export const WALK_M_PER_MIN = 80;   // about 3 mph
 const BUS_M_PER_MIN = 350;          // about 13 mph with stops and traffic
 const DWELL_MIN = 0.4;              // time at each stop
 export const DEFAULT_WALK = 4;      // minutes from a building to the stop you linked it to
 export const BACKUP_WINDOW = 20;    // the second option has to leave within this many minutes
 
-// ---------- the feed ----------
-let testFeed = null;
-export const setTestFeed = (feed) => { testFeed = feed; }; // for checking the math without live data
+/**
+ * Helper to call the bus proxy endpoint.
+ * Supports calling Supabase Edge Function and falls back to local proxy.
+ */
+async function callBusProxy(endpoint, params = {}) {
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const query = new URLSearchParams({ endpoint: cleanEndpoint, ...params }).toString();
+  const urls = [];
+  if (SUPABASE_PROXY_URL) {
+    urls.push(`${SUPABASE_PROXY_URL}?${query}`);
+  }
+  urls.push(`${LOCAL_PROXY_URL}?${query}`);
 
-async function fetchFeed() {
-  if (testFeed) return testFeed;
-  // TODO(bus): read UVM's CATS map (uvm.rider.peaktransit.com) and return
-  // { stops, routes, vehicles, arrivals } in the shape above.
+  let lastError = null;
+  for (const url of urls) {
+    try {
+      const headers = { Accept: 'application/json' };
+      if (SUPABASE_ANON_KEY && SUPABASE_URL && url.includes(SUPABASE_URL)) {
+        headers.apikey = SUPABASE_ANON_KEY;
+        headers.Authorization = `Bearer ${SUPABASE_ANON_KEY}`;
+      }
+      const res = await fetch(url, { headers });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  if (lastError) {
+    console.warn('[bus] Proxy request failed:', lastError);
+  }
   return null;
 }
 
-function readStatic() {
-  try { return JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); } catch { return null; }
+/**
+ * 1. Fetch active routes (/routes)
+ * @returns {Promise<Array<{ id: string, name: string, color: string }>>}
+ */
+export async function fetchRoutes() {
+  const res = await callBusProxy('/routes');
+  if (!res) return [];
+  const raw = Array.isArray(res) ? res : (res.routes || res.data || []);
+  if (!Array.isArray(raw)) return [];
+  return raw.map((r) => {
+    let color = r.color || r.route_color || r.routeColor || '';
+    if (color && !color.startsWith('#') && !color.startsWith('var(')) {
+      color = `#${color}`;
+    }
+    return {
+      id: String(r.id ?? r.route_id ?? r.routeId ?? ''),
+      name: String(r.name ?? r.route_name ?? r.routeName ?? r.title ?? r.short_name ?? 'Shuttle'),
+      color: color || 'var(--green-fill)',
+      stops: r.stops ?? [],
+    };
+  }).filter((r) => r.id && r.name);
 }
 
-// { ok, reason?: 'not-connected' | 'error', stops, routes, vehicles, arrivals, at }
-export async function loadBus() {
-  const cached = readStatic();
-  const fallback = { stops: cached?.stops ?? [], routes: cached?.routes ?? [], vehicles: [], arrivals: [] };
-  try {
-    const f = await fetchFeed();
-    if (!f) return { ok: false, reason: 'not-connected', ...fallback };
-    const feed = { stops: f.stops ?? [], routes: f.routes ?? [], vehicles: f.vehicles ?? [], arrivals: f.arrivals ?? [] };
-    try { localStorage.setItem(CACHE_KEY, JSON.stringify({ stops: feed.stops, routes: feed.routes })); } catch { /* full */ }
-    return { ok: true, ...feed, at: Date.now() };
-  } catch (err) {
-    console.warn('bus feed', err);
-    return { ok: false, reason: 'error', ...fallback };
-  }
+/**
+ * 2. Fetch stops for a selected route (/stops?route_id={id})
+ * @param {string|number} routeId
+ * @returns {Promise<Array<{ id: string, name: string, lat?: number, lon?: number }>>}
+ */
+export async function fetchStops(routeId) {
+  if (!routeId) return [];
+  const res = await callBusProxy('/stops', { route_id: String(routeId) });
+  if (!res) return [];
+  const raw = Array.isArray(res) ? res : (res.stops || res.data || []);
+  if (!Array.isArray(raw)) return [];
+  return raw.map((s) => ({
+    id: String(s.id ?? s.stop_id ?? s.stopId ?? ''),
+    name: String(s.name ?? s.stop_name ?? s.stopName ?? s.title ?? 'Bus Stop'),
+    lat: Number(s.lat ?? s.latitude ?? 0),
+    lon: Number(s.lon ?? s.longitude ?? s.lng ?? 0),
+  })).filter((s) => s.id && s.name);
 }
 
-// ---------- geometry ----------
+/**
+ * 3. Fetch live arrival predictions for a selected stop (/predictions?stop_id={id})
+ * @param {string|number} stopId
+ * @returns {Promise<Array<{ min: number, vehicle: string, routeName: string, eta: string }>>}
+ */
+export async function fetchPredictions(stopId) {
+  if (!stopId) return [];
+  const res = await callBusProxy('/predictions', { stop_id: String(stopId) });
+  if (!res) return [];
+  const raw = Array.isArray(res) ? res : (res.predictions || res.arrivals || res.data || []);
+  if (!Array.isArray(raw)) return [];
+  return raw.map((p) => {
+    let min = 0;
+    if (typeof p.min === 'number') min = p.min;
+    else if (typeof p.minutes === 'number') min = p.minutes;
+    else if (typeof p.eta_minutes === 'number') min = p.eta_minutes;
+    else if (p.eta) {
+      const diff = new Date(p.eta).getTime() - Date.now();
+      min = Math.max(0, Math.round(diff / 60000));
+    } else if (p.arrival_time) {
+      const diff = new Date(p.arrival_time).getTime() - Date.now();
+      min = Math.max(0, Math.round(diff / 60000));
+    }
+    return {
+      min: Math.max(0, Math.round(min)),
+      vehicle: String(p.vehicle_id ?? p.vehicle ?? p.bus ?? ''),
+      routeName: String(p.route_name ?? p.routeName ?? p.route ?? ''),
+      eta: String(p.eta ?? p.arrival_time ?? ''),
+    };
+  }).sort((a, b) => a.min - b.min);
+}
+
+// Aliases
+export const getRoutes = fetchRoutes;
+export const getStops = fetchStops;
+export const getPredictions = fetchPredictions;
+
+// ---------- geometry & trip planning helpers ----------
 export function meters(a, b) {
   const R = 6371000;
   const rad = (d) => (d * Math.PI) / 180;
@@ -58,16 +140,14 @@ export function meters(a, b) {
 export const walkMinutes = (m) => Math.max(1, Math.ceil(m / WALK_M_PER_MIN));
 
 export function nearestStops(stops, spot, n = 3) {
-  return stops.filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lon))
+  return (stops || []).filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lon))
     .map((s) => ({ stop: s, m: meters(spot, s) }))
     .sort((a, b) => a.m - b.m).slice(0, n);
 }
 
-// "Innov E423" -> "innov", "Terrill Hall 309B" -> "terrill hall": the building, without the room.
 export const placeKey = (text) => String(text || '').toLowerCase().split(/\s+/)
   .filter((w) => w && !/\d/.test(w)).join(' ').trim();
 
-// ---------- routes ----------
 function legsOf(route, byId) {
   const ids = route.stops ?? [];
   const legs = [];
@@ -76,10 +156,9 @@ function legsOf(route, byId) {
     const b = byId[ids[(i + 1) % ids.length]];
     legs.push(a && b ? meters(a, b) / BUS_M_PER_MIN + DWELL_MIN : 1);
   }
-  return legs; // legs[i] = minutes from stop i to stop i+1 (the last one wraps around on a loop)
+  return legs;
 }
 
-// Minutes riding from position `from` to position `to` along the route, or null if it can't go that way.
 function rideMinutes(route, legs, from, to) {
   const n = (route.stops ?? []).length;
   if (from === to) return 0;
@@ -91,7 +170,6 @@ function rideMinutes(route, legs, from, to) {
 
 const cycleMinutes = (route, legs) => (route.loop === false ? null : legs.reduce((s, x) => s + x, 0));
 
-// Where a bus is on its route: the position of the stop it's closest to.
 function vehicleIndex(route, byId, v) {
   let best = 0;
   let bestM = Infinity;
@@ -104,8 +182,6 @@ function vehicleIndex(route, byId, v) {
   return best;
 }
 
-// Buses coming to one stop on one route, soonest first, looking about 45 minutes ahead:
-// [{ min, vehicleId, pass }] where pass 0 is its next time around and pass 1 the one after.
 function arrivalsAt(feed, route, stopId, byId, legs) {
   const listed = (feed.arrivals ?? []).filter((a) => a.stopId === stopId && a.routeId === route.id && Number.isFinite(a.min));
   const cycle = cycleMinutes(route, legs);
@@ -125,13 +201,6 @@ function arrivalsAt(feed, route, stopId, byId, legs) {
   return out.sort((x, y) => x.min - y.min);
 }
 
-// ---------- planning a trip ----------
-// from: [{ stopId, walk }] stops you could walk to and how long each takes.
-// to:   [stopId] stops that get you where you're going.
-// Returns { options, missed } where options are catchable trips sorted by when you'd arrive:
-//   { routeId, routeName, color, boardStopId, boardStop, alightStopId, alightStop, busIn, walk,
-//     leaveIn, ride, arriveIn, vehicleId, busNear, stopsAway, pass }
-// and missed is the soonest bus you can't make in time (to explain why the first option is later).
 export function planTrip(feed, { from, to }) {
   const byId = Object.fromEntries((feed.stops ?? []).map((s) => [s.id, s]));
   const options = [];
@@ -167,7 +236,6 @@ export function planTrip(feed, { from, to }) {
       }
     }
   }
-  // One entry per actual bus pass: keep whichever stop pair gets you there soonest.
   const seen = new Map();
   for (const o of options.sort((a, b) => a.arriveIn - b.arriveIn || a.walk - b.walk)) {
     const key = `${o.routeId}|${o.vehicleId}|${o.pass}`;
@@ -176,11 +244,22 @@ export function planTrip(feed, { from, to }) {
   return { options: [...seen.values()].sort((a, b) => a.arriveIn - b.arriveIn), missed };
 }
 
-// The best trip plus a backup that leaves within BACKUP_WINDOW minutes and isn't the same bus.
 export function pickTwo(plan) {
   const [best, ...rest] = plan.options;
   if (!best) return { best: null, backup: null };
   const backup = rest.find((o) => o.busIn <= BACKUP_WINDOW
     && !(o.routeId === best.routeId && o.vehicleId === best.vehicleId && o.pass === best.pass)) ?? null;
   return { best, backup };
+}
+
+export async function loadBus() {
+  try {
+    const routes = await fetchRoutes();
+    if (!routes.length) {
+      return { ok: false, reason: 'empty', routes: [], stops: [], vehicles: [], arrivals: [] };
+    }
+    return { ok: true, routes, stops: [], vehicles: [], arrivals: [], at: Date.now() };
+  } catch (err) {
+    return { ok: false, reason: 'error', routes: [], stops: [], vehicles: [], arrivals: [] };
+  }
 }

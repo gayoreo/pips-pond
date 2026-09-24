@@ -1,0 +1,8 @@
+{
+  "name": "Pip's Pond",
+  "description": "Meal plan tracker for swipes and retail points featuring Pip the frog.",
+  "permissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

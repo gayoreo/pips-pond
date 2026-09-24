@@ -118,7 +118,7 @@ function renderUI() {
           return `
             <section class="card bus-result ${idx > 0 ? 'bus-result--backup' : ''}">
               <p class="eyebrow">${idx === 0 ? 'Next Shuttle' : `Option #${idx + 1}`}</p>
-              <p class="bus-take" style="--route:${esc(selectedRoute?.color || 'var(--green-fill)')}">
+              <p class="bus-take" style="--route:${esc(p.color || selectedRoute?.color || 'var(--green-fill)')}">
                 <b>${esc(p.routeName || selectedRoute?.name || 'Shuttle')}</b> at <b>${esc(selectedStop?.name || 'Stop')}</b>
               </p>
               <p><b>${esc(minText)}</b>${p.vehicle ? ` · Bus #${esc(p.vehicle)}` : ''}</p>

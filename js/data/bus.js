@@ -369,17 +369,9 @@ export function pickTwo(trips = []) {
   let backup = null;
   for (let i = 1; i < sorted.length; i++) {
     const candidate = sorted[i];
-    const diff = candidate.min - best.min;
-    if (diff >= 0 && diff <= BACKUP_WINDOW) {
+    if (!candidate.noActiveBus) {
       backup = candidate;
       break;
-    }
-  }
-
-  if (!backup && sorted.length > 1) {
-    const second = sorted[1];
-    if (second.min - best.min <= BACKUP_WINDOW + 10) {
-      backup = second;
     }
   }
 

@@ -18,8 +18,9 @@ const state = {
 
 let currentRoot = null;
 
-// Campus destination shortcuts including STEM and WDW
+// Campus destination shortcuts including UHeights, STEM, and WDW
 const POPULAR_STOPS = [
+  { name: 'UHeights', match: /uheight|university heights/i },
   { name: 'STEM', match: /stem/i },
   { name: 'WDW', match: /wdw/i },
   { name: 'Davis Center', match: /davis.*morrill|davis.*south|davis/i },

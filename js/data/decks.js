@@ -2,14 +2,55 @@
 // Saved with the rest of your pond and synced as one piece called "decks".
 import { readAll, writeAll, newId } from './db.js';
 import { parseCSV } from './importExport.js';
-import { todayKey, addDays } from '../core/dates.js';
+import { todayKey, addDays, fromKey } from '../core/dates.js';
 
 // How many days until a card comes back, by box. Right answers move a card up a box,
 // a miss sends it back to box 0 (due again today).
 const BOX_DAYS = [0, 1, 2, 4, 8, 16, 30];
 export const MAX_BOX = BOX_DAYS.length - 1;
 
-const norm = (d) => ({ decks: Array.isArray(d?.decks) ? d.decks : [] });
+const norm = (d) => ({ decks: Array.isArray(d?.decks) ? d.decks : [], goal: Number(d?.goal) > 0 ? Number(d.goal) : 20 });
+const daysBetween = (a, b) => Math.round((fromKey(b) - fromKey(a)) / 86400000);
+
+// ---------- scheduling ----------
+// Each card keeps an interval (days until it comes back) and an ease (how fast that grows).
+// Again resets it, Hard grows it a little, Good grows it by the ease, Easy grows it more.
+// Older cards only had a box; their interval is read from the box until they're rated.
+const boxFor = (ivl) => (ivl <= 0 ? 0 : ivl < 2 ? 1 : ivl < 4 ? 2 : ivl < 8 ? 3 : ivl < 16 ? 4 : ivl < 30 ? 5 : 6);
+const ivlOf = (c) => (Number.isFinite(c.ivl) ? c.ivl : BOX_DAYS[c.box || 0] ?? 0);
+const easeOf = (c) => (Number.isFinite(c.ease) ? c.ease : 2.5);
+export const RATINGS = ['Again', 'Hard', 'Good', 'Easy'];
+
+export function nextInterval(c, rating) {
+  const ivl = ivlOf(c);
+  const ease = easeOf(c);
+  let out;
+  if (rating === 0) out = { ivl: 0, ease: Math.max(1.3, ease - 0.2) };
+  else if (rating === 1) out = { ivl: Math.max(1, Math.round(ivl * 1.2)), ease: Math.max(1.3, ease - 0.15) };
+  else if (rating === 2) out = { ivl: ivl < 1 ? 1 : ivl < 3 ? 3 : Math.round(ivl * ease), ease };
+  else out = { ivl: ivl < 1 ? 4 : Math.round(Math.max(ivl, 1) * ease * 1.3), ease: ease + 0.15 };
+  out.ivl = Math.min(365, out.ivl);
+  return out;
+}
+export const intervalLabel = (d) => (d <= 0 ? 'again today' : d === 1 ? '1 day' : d < 30 ? `${d} days` : `${Math.round(d / 30)} mo`);
+
+// How well a card is known (0-1): about three weeks between reviews counts as mastered.
+export const cardMastery = (c) => (c.seen ? Math.min(1, ivlOf(c) / 21) : 0);
+export const deckMastery = (deck) => (deck.cards?.length
+  ? Math.round((deck.cards.reduce((s, c) => s + cardMastery(c), 0) / deck.cards.length) * 100) : 0);
+
+// Cards you keep missing: misses and lapses count against, rights count for, low ease adds weight.
+export function weakCards(deck, limit = 20) {
+  const score = (c) => (c.wrong || 0) * 2 + (c.lapses || 0) - (c.right || 0) * 0.5 + (2.5 - easeOf(c)) * 4;
+  return (deck.cards ?? []).filter((c) => (c.wrong || 0) > 0 || easeOf(c) < 2.3)
+    .sort((a, b) => score(b) - score(a)).slice(0, limit);
+}
+
+// ---------- daily goal ----------
+export const getGoal = () => norm(readAll().decks).goal;
+export const setGoal = (n) => change((st) => { st.goal = Math.max(1, Math.min(500, Math.round(Number(n) || 20))); });
+export const reviewedToday = (today = todayKey()) =>
+  getDecks().reduce((n, d) => n + ((d.log ?? []).find((x) => x.d === today)?.n || 0), 0);
 
 export const getDecks = () => norm(readAll().decks).decks;
 export const getDeck = (id) => getDecks().find((d) => d.id === id) ?? null;
@@ -99,24 +140,41 @@ export const deleteCard = (deckId, cardId) => change((st) => {
 });
 
 // ---------- review (spaced repetition) ----------
-export const dueCards = (deck, today = todayKey()) => deck.cards.filter((c) => (c.due || today) <= today);
+// A deck linked to an exam goes into cram mode for the last 3 days before it: every card
+// comes up once a day, even ones not due yet.
+export const isCramming = (deck, today = todayKey()) =>
+  Boolean(deck.examDue) && today < deck.examDue && daysBetween(today, deck.examDue) <= 3;
+export const dueCards = (deck, today = todayKey()) => {
+  const cram = isCramming(deck, today);
+  return deck.cards.filter((c) => (c.due || today) <= today || (cram && c.seen !== today));
+};
 export const totalDue = (today = todayKey()) => getDecks().reduce((n, d) => n + dueCards(d, today).length, 0);
 
-export const gradeCard = (deckId, cardId, correct) => change((st) => {
+function logAnswers(d, today, n, r) {
+  d.log = (d.log ?? []).filter((x) => x.d > addDays(today, -60));
+  const row = d.log.find((x) => x.d === today) ?? (d.log.push({ d: today, n: 0, r: 0 }), d.log[d.log.length - 1]);
+  row.n += n;
+  row.r += r;
+}
+
+// rating: 0 Again, 1 Hard, 2 Good, 3 Easy.
+export const rateCard = (deckId, cardId, rating) => change((st) => {
   const d = find(st, deckId);
   const c = d?.cards.find((x) => x.id === cardId);
   if (!c) return;
   const today = todayKey();
-  // Day by day counts, for the stats screen.
-  d.log = (d.log ?? []).filter((x) => x.d > addDays(today, -60));
-  const row = d.log.find((x) => x.d === today) ?? (d.log.push({ d: today, n: 0, r: 0 }), d.log[d.log.length - 1]);
-  row.n += 1;
-  if (correct) row.r += 1;
-  if (correct) { c.box = Math.min((c.box || 0) + 1, MAX_BOX); c.right = (c.right || 0) + 1; }
-  else { c.box = 0; c.wrong = (c.wrong || 0) + 1; }
-  c.due = addDays(today, BOX_DAYS[c.box]);
+  logAnswers(d, today, 1, rating > 0 ? 1 : 0);
+  const next = nextInterval(c, rating);
+  c.ivl = next.ivl;
+  c.ease = Math.round(next.ease * 100) / 100;
+  c.box = boxFor(c.ivl);
+  if (rating === 0) { c.wrong = (c.wrong || 0) + 1; c.lapses = (c.lapses || 0) + 1; } else c.right = (c.right || 0) + 1;
+  c.due = addDays(today, c.ivl);
   c.seen = today;
 });
+
+// Older right/wrong grading, kept for anything that still calls it.
+export const gradeCard = (deckId, cardId, correct) => rateCard(deckId, cardId, correct ? 2 : 0);
 
 export const markReviewed = (deckId) => change((st) => {
   const d = find(st, deckId);
@@ -220,12 +278,18 @@ export function checkTyped(given, answer) {
 export const checkAny = (given, answers) => (answers ?? []).some((a) => checkTyped(given, a));
 
 // Saves the score, and sends missed cards back to the start of the review boxes.
-export const saveQuizResult = (deckId, { score, total, missed }) => change((st) => {
+// Quiz answers count toward the daily goal and feed weak-spot tracking.
+export const saveQuizResult = (deckId, { score, total, missed, rightIds = [], mode = '' }) => change((st) => {
   const d = find(st, deckId);
   if (!d) return;
   const today = todayKey();
-  d.lastQuiz = { date: today, score, total, missed };
-  for (const c of d.cards) if (missed.includes(c.id)) Object.assign(c, { box: 0, due: today });
+  d.lastQuiz = { date: today, score, total, missed, mode };
+  if (total) logAnswers(d, today, total, score);
+  for (const c of d.cards) {
+    if (missed.includes(c.id)) {
+      Object.assign(c, { box: 0, ivl: 0, due: today, wrong: (c.wrong || 0) + 1, ease: Math.max(1.3, Math.round((easeOf(c) - 0.1) * 100) / 100) });
+    } else if (rightIds.includes(c.id)) c.right = (c.right || 0) + 1;
+  }
   d.reviewedOn = [...new Set([...(d.reviewedOn ?? []), today])].sort().slice(-60);
 });
 

@@ -12,6 +12,7 @@ import { renderStudy } from './views/study.js';
 import { renderCourseSetup } from './views/courseSetup.js';
 import { renderCourse } from './views/course.js';
 import { renderDining } from './views/dining.js';
+import { renderBus } from './views/bus.js';
 import { renderDeck, renderReview, renderFlip, renderQuiz } from './views/decks.js';
 import { CHANGE_EVENT } from './data/db.js';
 import { mayUseApp } from './data/auth.js';
@@ -22,6 +23,7 @@ const routes = {
   '#/log':       { label: 'Log',       render: renderLog,       tab: true, live: true },
   '#/study':     { label: 'Study',     render: renderStudy,     tab: true, live: true },
   '#/dining':    { label: 'Dining',    render: renderDining,    tab: true },
+  '#/bus':       { label: 'Bus',       render: renderBus },
   '#/deck':      { label: 'Deck',      render: renderDeck,      live: true },
   '#/course':    { label: 'Course',    render: renderCourse,    live: true },
   '#/review':    { label: 'Review',    render: renderReview,    bare: true },

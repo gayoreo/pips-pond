@@ -1,13 +1,15 @@
 // Flashcard screens: one deck (cards, import), Review (spaced repetition), Flip through, and Quiz.
 import {
-  getDeck, updateDeck, deleteDeck, resetProgress, addCards, updateCard, deleteCard, dueCards, gradeCard, markReviewed,
+  getDeck, updateDeck, deleteDeck, resetProgress, addCards, updateCard, deleteCard, dueCards, markReviewed,
   reviewStreak, buildQuiz, checkTyped, checkAny, saveQuizResult, parseCardLines, parseCardCSV, MAX_BOX,
   cardFace, clozePrompt, clozeFilled, answerList, deckStats, isCloze, restoreCard, restoreDeck,
+  rateCard, nextInterval, intervalLabel, RATINGS, deckMastery, weakCards, isCramming, getGoal, reviewedToday,
 } from '../data/decks.js';
 import { shareDeck, unshareDeck, fetchShared, importShared, shareSize, SHARE_LIMIT } from '../data/share.js';
 import { userNow } from '../data/supabase.js';
 import { appUrl } from '../data/auth.js';
-import { getStudy } from '../data/study.js';
+import { getStudy, liveTasks, addTask, deleteTask, toggleDone } from '../data/study.js';
+import { todayKey, addDays, formatShort, fromKey } from '../core/dates.js';
 import { getProfile } from '../data/db.js';
 import { frogSVG } from '../pip/frog.js';
 import { esc } from '../ui/dom.js';
@@ -48,12 +50,67 @@ const typeTag = (c) => (c.type && c.type !== 'basic' ? `<span class="dn-tag">${e
 
 const boxDots = (c) => `<span class="box-dots" aria-label="Learned ${c.box || 0} of ${MAX_BOX}">${Array.from({ length: MAX_BOX }, (_, i) => `<i class="${i < (c.box || 0) ? 'on' : ''}"></i>`).join('')}</span>`;
 
+// ---------- exam links ----------
+// A deck can be tied to an exam (or quiz) in the planner. Linking adds review sessions to the
+// planner 5, 3 and 1 days before, and the deck goes into cram mode for the last 3 days.
+const daysUntil = (day) => Math.round((fromKey(day) - fromKey(todayKey())) / 86400000);
+const examTask = (deck) => (deck?.examId ? liveTasks(getStudy()).find((t) => t.id === deck.examId) ?? null : null);
+const upcomingTests = () => liveTasks(getStudy())
+  .filter((t) => (t.type === 'exam' || t.type === 'quiz') && !t.done && t.due >= todayKey())
+  .sort((a, b) => a.due.localeCompare(b.due));
+
+function clearSessions(deckIdValue) {
+  const today = todayKey();
+  for (const t of liveTasks(getStudy())) if (t.deckId === deckIdValue && !t.done && t.due >= today) deleteTask(t.id);
+}
+
+function planSessions(deck, exam) {
+  const today = todayKey();
+  let made = 0;
+  for (const off of [5, 3, 1]) {
+    const day = addDays(exam.due, -off);
+    if (day < today) continue;
+    addTask({ title: `Review ${deck.name}`, type: 'homework', courseId: deck.courseId || exam.courseId || '', due: day, noScore: true, deckId: deck.id, notes: `Getting ready for ${exam.title}.` });
+    made++;
+  }
+  if (!made && exam.due >= today) {
+    addTask({ title: `Review ${deck.name}`, type: 'homework', courseId: deck.courseId || exam.courseId || '', due: today, noScore: true, deckId: deck.id, notes: `Getting ready for ${exam.title}.` });
+    made++;
+  }
+  return made;
+}
+
+// Finishing a review ticks off that day's planned review session for the deck.
+function finishSession(deckIdValue) {
+  const today = todayKey();
+  const t = liveTasks(getStudy()).find((x) => x.deckId === deckIdValue && !x.done && x.due <= today);
+  if (t) toggleDone(t.id);
+}
+
+// Keeps the deck's copy of the exam date in step with the planner.
+function syncExamDate(deck) {
+  if (!deck.examId) return;
+  const t = examTask(deck);
+  if (!t) updateDeck(deck.id, { examId: '', examDue: '' });
+  else if (t.due !== deck.examDue) updateDeck(deck.id, { examDue: t.due });
+}
+
 // ---------- one deck ----------
 export async function renderDeck(root) {
-  const deck = getDeck(deckId());
-  if (!deck) { backToDecks(); return; }
+  const found = getDeck(deckId());
+  if (!found) { backToDecks(); return; }
+  syncExamDate(found);
+  const deck = getDeck(found.id);
   const course = getStudy().courses.find((c) => c.id === deck.courseId);
   const due = dueCards(deck).length;
+  const exam = examTask(deck);
+  const weak = weakCards(deck).length;
+  const mastery = deckMastery(deck);
+  const examLine = exam ? (() => {
+    const d = daysUntil(exam.due);
+    const when = d === 0 ? 'today' : d === 1 ? 'tomorrow' : `in ${d} days`;
+    return `<p class="deck-exam">📝 Getting ready for <b>${esc(exam.title)}</b> ${when}${isCramming(deck) ? ' · cram mode: every card comes up once a day' : ''}</p>`;
+  })() : '';
   const q = state.search.trim().toLowerCase();
   const cards = q ? deck.cards.filter((c) => `${c.front} ${c.back}`.toLowerCase().includes(q)) : deck.cards;
 
@@ -68,11 +125,14 @@ export async function renderDeck(root) {
       ${course ? `<p class="eyebrow">${esc(course.name)}</p>` : ''}
       <h1 class="page-title">${esc(deck.name)}</h1>
       <p class="card__hint">${deck.cards.length} ${deck.cards.length === 1 ? 'card' : 'cards'} · ${due} due${deck.lastQuiz ? ` · last quiz ${deck.lastQuiz.score}/${deck.lastQuiz.total}` : ''}</p>
+      ${deck.cards.length ? `<div class="mastery" aria-label="${mastery}% mastered"><span style="--w:${mastery}%"></span></div><p class="card__hint">${mastery}% mastered</p>` : ''}
+      ${examLine}
     </header>
     <div class="deck-actions">
       <button type="button" class="btn-sketch btn-sketch--go" data-go="review"${due ? '' : ' disabled'}>${due ? `Review ${due}` : 'Nothing due'}</button>
       <button type="button" class="btn-sketch" data-go="flip"${deck.cards.length ? '' : ' disabled'}>Flip through</button>
       <button type="button" class="btn-sketch" data-go="quiz"${deck.cards.length > 1 ? '' : ' disabled'}>Quiz</button>
+      ${weak ? `<button type="button" class="btn-sketch" data-weak>Weak spots (${weak})</button>` : ''}
     </div>
     <div class="row">
       <button type="button" class="btn-plain" data-add-card>+ add a card</button>
@@ -104,6 +164,11 @@ export async function renderDeck(root) {
       if (go.dataset.go === 'flip') state.flip = null;
       if (go.dataset.go === 'quiz') state.quiz = null;
       location.hash = `#/${go.dataset.go}`;
+      return undefined;
+    }
+    if (t.closest('[data-weak]')) {
+      state.quiz = { deckId: deck.id, phase: 'setup', mode: 'mix', direction: 'front', count: 0, pool: 'weak' };
+      location.hash = '#/quiz';
       return undefined;
     }
     if (t.closest('[data-add-card]')) return openCardSheet(deck.id, null);
@@ -371,6 +436,7 @@ function openImportSheet(deckIdValue) {
 function openDeckSettings(id) {
   const deck = getDeck(id);
   const courses = getStudy().courses;
+  const tests = upcomingTests();
   const html = `
     <label class="field">Deck name<input name="name" maxlength="60" value="${esc(deck.name)}"></label>
     <label class="field">Course
@@ -379,6 +445,13 @@ function openDeckSettings(id) {
         ${courses.map((c) => `<option value="${esc(c.id)}"${c.id === deck.courseId ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}
       </select>
     </label>
+    <label class="field">Getting ready for
+      <select name="exam">
+        <option value="">Nothing in particular</option>
+        ${tests.map((t) => `<option value="${esc(t.id)}"${t.id === deck.examId ? ' selected' : ''}>${esc(t.title)} · ${esc(formatShort(t.due))}</option>`).join('')}
+      </select>
+    </label>
+    <p class="card__hint">Pick an exam or quiz from your planner and review sessions get added 5, 3 and 1 days before it. The last 3 days, every card comes up once a day.</p>
     <button type="button" class="btn-sketch btn-sketch--go" data-save>Save</button>
     <button type="button" class="btn-plain" data-reset>start review progress over</button>
     <button type="button" class="btn-plain btn-plain--danger" data-delete>delete deck</button>`;
@@ -387,7 +460,18 @@ function openDeckSettings(id) {
       if (e.target.closest('[data-save]')) {
         const name = sheet.querySelector('[name="name"]').value.trim();
         if (!name) { toast('Give the deck a name.'); return; }
-        updateDeck(id, { name, courseId: sheet.querySelector('[name="course"]').value });
+        const courseId = sheet.querySelector('[name="course"]').value;
+        const examId = sheet.querySelector('[name="exam"]').value;
+        updateDeck(id, { name, courseId });
+        if (examId !== (deck.examId || '')) {
+          clearSessions(id);
+          const exam = tests.find((t) => t.id === examId);
+          updateDeck(id, { examId: exam ? exam.id : '', examDue: exam ? exam.due : '' });
+          if (exam) {
+            const n = planSessions(getDeck(id), exam);
+            toast(`Linked. ${n} review ${n === 1 ? 'session' : 'sessions'} added to your planner.`);
+          } else toast('Unlinked. Upcoming review sessions removed.');
+        }
         close();
       } else if (e.target.closest('[data-reset]')) {
         if (!confirm('Make every card new again? All cards become due today.')) return;
@@ -398,6 +482,7 @@ function openDeckSettings(id) {
         if (!confirm(`Delete ${deck.name} and all ${deck.cards.length} cards?`)) return;
         const copy = JSON.parse(JSON.stringify(deck));
         close();
+        clearSessions(id);
         deleteDeck(id);
         backToDecks();
         toast(`${deck.name} deleted.`, { undo: () => restoreDeck(copy) });
@@ -429,13 +514,17 @@ export async function renderReview(root) {
   }
   const r = state.review;
   if (!r.queue.length) {
-    if (r.total) markReviewed(deck.id);
+    if (r.total) { markReviewed(deck.id); finishSession(deck.id); }
     const streak = reviewStreak();
+    const goal = getGoal();
+    const doneToday = reviewedToday();
     return endScreen(root, {
       mood: 'happy',
       title: r.total ? 'All caught up!' : 'Nothing due right now',
       lines: r.total
-        ? [`Reviewed ${r.total} ${r.total === 1 ? 'card' : 'cards'}. ${r.firstTry} right on the first try.`, streak > 1 ? `${streak}-day review streak.` : '']
+        ? [`Reviewed ${r.total} ${r.total === 1 ? 'card' : 'cards'}. ${r.firstTry} right on the first try.`,
+          doneToday >= goal ? `Daily goal done: ${doneToday} of ${goal} today.` : `${doneToday} of ${goal} for today's goal.`,
+          streak > 1 ? `${streak}-day review streak.` : '']
         : ['Come back tomorrow, or flip through the deck to practice.'],
       buttons: '<a class="btn-sketch btn-sketch--go" href="#/deck">back to the deck</a>',
     });
@@ -459,31 +548,32 @@ export async function renderReview(root) {
       ${!r.shown && card.type === 'multi' && face.answers.length > 1 ? `<span class="flash__hint">${face.answers.length} answers</span>` : ''}
     </button>
     ${r.shown ? `
-    <div class="grade">
-      <button type="button" class="btn-sketch grade--miss" data-grade="0">missed it</button>
-      <button type="button" class="btn-sketch btn-sketch--go" data-grade="1">got it</button>
-    </div>` : ''}
+    <div class="grade grade--4">${RATINGS.map((label, n) => `
+      <button type="button" class="btn-sketch rate rate--${n}" data-rate="${n}"><b>${label}</b><small>${esc(intervalLabel(nextInterval(card, n).ivl))}</small></button>`).join('')}
+    </div>
+    <p class="card__hint rate-hint">Again if you missed it. Hard, Good or Easy for how well you knew it.</p>` : ''}
   </div>`;
 
-  const grade = (ok) => {
-    gradeCard(deck.id, card.id, ok);
+  const grade = (rating) => {
+    rateCard(deck.id, card.id, rating);
     r.queue.shift();
-    if (ok) { r.done++; if (!r.missedOnce.has(card.id)) r.firstTry++; play('pop'); }
+    if (rating > 0) { r.done++; if (!r.missedOnce.has(card.id)) r.firstTry++; play('pop'); }
     else { r.missedOnce.add(card.id); r.queue.push(card.id); play('stamp'); }
     r.shown = false;
     renderReview(root);
   };
   root.querySelector('.session').addEventListener('click', (e) => {
     if (e.target.closest('[data-reveal]') && !r.shown) { r.shown = true; renderReview(root); return; }
-    const g = e.target.closest('[data-grade]');
-    if (g) grade(g.dataset.grade === '1');
+    const g = e.target.closest('[data-rate]');
+    if (g) grade(Number(g.dataset.rate));
   });
   root.onkeydown = null;
   document.onkeydown = (e) => {
     if (location.hash !== '#/review') { document.onkeydown = null; return; }
     if (!r.shown && (e.key === ' ' || e.key === 'Enter')) { e.preventDefault(); r.shown = true; renderReview(root); }
-    else if (r.shown && (e.key === '1' || e.key === 'ArrowLeft')) grade(false);
-    else if (r.shown && (e.key === '2' || e.key === 'ArrowRight')) grade(true);
+    else if (r.shown && /^[1-4]$/.test(e.key)) grade(Number(e.key) - 1);
+    else if (r.shown && e.key === 'ArrowLeft') grade(0);
+    else if (r.shown && e.key === 'ArrowRight') grade(2);
   };
   return undefined;
 }
@@ -546,19 +636,81 @@ export async function renderFlip(root) {
 }
 
 // ---------- quiz ----------
+// Modes: multiple choice, type it, mix, matching (pair fronts with backs, 6 at a time) and
+// lightning (as many multiple-choice answers as you can in 60 seconds).
+// Pools: every card, the ones missed last quiz, or your weak spots.
+const LIGHTNING_MS = 60_000;
+let quizTimer = null;
+const clearTimer = () => { if (quizTimer) { clearInterval(quizTimer); quizTimer = null; } };
+const shuffled = (list) => [...list].sort(() => Math.random() - 0.5);
+const chunk = (list, n) => Array.from({ length: Math.ceil(list.length / n) }, (_, i) => list.slice(i * n, i * n + n));
+
+function poolIds(deck, pool) {
+  if (pool === 'missed') return deck.lastQuiz?.missed?.filter((id) => deck.cards.some((c) => c.id === id)) ?? [];
+  if (pool === 'weak') return weakCards(deck).map((c) => c.id);
+  return null;
+}
+
+function newBoard(z) {
+  const qs = z.rounds[z.round];
+  z.board = {
+    left: qs.map((q) => ({ id: q.cardId, text: q.ask })),
+    right: shuffled(qs.map((q) => ({ id: q.cardId, text: q.answer }))),
+    selL: null, selR: null, done: [], bad: [], flash: [],
+  };
+}
+
+function startQuiz(root, deck, onlyIds) {
+  const z = state.quiz;
+  clearTimer();
+  const base = { i: 0, right: 0, missed: [], rightIds: [], answered: null, asked: 0, timed: false };
+  if (z.mode === 'match') {
+    const qs = buildQuiz(deck, { mode: 'type', direction: z.direction, count: z.count, onlyIds })
+      .filter((q) => q.ask && q.answer && q.answer.length <= 120 && !q.img);
+    if (qs.length < 2) { toast('Matching needs at least 2 cards with short answers.'); return; }
+    Object.assign(z, base, { phase: 'match', rounds: chunk(qs, 6), round: 0, total: qs.length });
+    newBoard(z);
+  } else if (z.mode === 'lightning') {
+    const qs = buildQuiz(deck, { mode: 'choice', direction: z.direction, count: 0, onlyIds }).filter((q) => q.kind === 'choice');
+    if (!qs.length) { toast('Lightning needs cards with short answers for multiple choice.'); return; }
+    Object.assign(z, base, { phase: 'ask', questions: qs, timed: true, endsAt: Date.now() + LIGHTNING_MS });
+  } else {
+    const qs = buildQuiz(deck, { mode: z.mode, direction: z.direction, count: z.count, onlyIds });
+    if (!qs.length) { toast('No cards to quiz on.'); return; }
+    Object.assign(z, base, { phase: 'ask', questions: qs, total: qs.length });
+  }
+  z.onlyIds = onlyIds;
+  renderQuiz(root);
+}
+
+function finishQuiz(deck, z) {
+  clearTimer();
+  if (z.phase === 'done') return;
+  z.phase = 'done';
+  if (z.timed) z.total = z.asked;
+  saveQuizResult(deck.id, { score: z.right, total: z.total, missed: z.missed, rightIds: z.rightIds, mode: z.mode });
+}
+
 export async function renderQuiz(root) {
   const deck = getDeck(deckId());
-  if (!deck) { backToDecks(); return; }
-  state.quiz ??= { deckId: deck.id, phase: 'setup', mode: 'mix', direction: 'front', count: 10, only: null };
+  if (!deck) { clearTimer(); backToDecks(); return; }
+  state.quiz ??= { deckId: deck.id, phase: 'setup', mode: 'mix', direction: 'front', count: 10, pool: 'all' };
   const z = state.quiz;
   if (z.deckId !== deck.id) { state.quiz = null; renderQuiz(root); return; }
+  z.pool ??= 'all';
 
   if (z.phase === 'setup') {
-    const lastMissed = deck.lastQuiz?.missed?.filter((id) => deck.cards.some((c) => c.id === id)) ?? [];
+    clearTimer();
+    const missedN = poolIds(deck, 'missed').length;
+    const weakN = poolIds(deck, 'weak').length;
+    if ((z.pool === 'missed' && !missedN) || (z.pool === 'weak' && !weakN)) z.pool = 'all';
     const seg = (name, options, value) => `
       <div class="seg" role="group" style="grid-template-columns:repeat(${options.length},1fr)">
         ${options.map(([v, label]) => `<button type="button" data-${name}="${v}" aria-pressed="${String(value) === String(v)}">${label}</button>`).join('')}
       </div>`;
+    const pools = [['all', 'all cards'], ...(missedN ? [['missed', `missed last time (${missedN})`]] : []), ...(weakN ? [['weak', `weak spots (${weakN})`]] : [])];
+    const timedNote = z.mode === 'lightning' ? '<p class="card__hint">60 seconds, multiple choice, as many as you can. Answers move on by themselves.</p>'
+      : z.mode === 'match' ? '<p class="card__hint">Tap a front, then its match. Six pairs at a time. A pair you get wrong first counts as missed.</p>' : '';
     root.innerHTML = `
     <div class="session stack">
       <div class="session__top">
@@ -569,38 +721,36 @@ export async function renderQuiz(root) {
       <h1 class="page-title">Build a quiz</h1>
       <p class="field">Questions</p>
       ${seg('mode', [['choice', 'multiple choice'], ['type', 'type it'], ['mix', 'mix']], z.mode)}
+      ${seg('mode', [['match', 'matching'], ['lightning', 'lightning 60s']], z.mode)}
+      ${timedNote}
       <p class="field">Show me</p>
       ${seg('direction', [['front', 'the front'], ['back', 'the back']], z.direction)}
-      <p class="field">How many</p>
-      ${seg('count', [[10, '10'], [20, '20'], [0, `all ${deck.cards.length}`]], z.count)}
-      ${lastMissed.length ? `<label class="row"><span>Only the ${lastMissed.length} I missed last time</span><input type="checkbox" class="switch" data-only${z.only ? ' checked' : ''}></label>` : ''}
+      ${z.mode === 'lightning' ? '' : `<p class="field">How many</p>
+      ${seg('count', [[10, '10'], [20, '20'], [0, 'all']], z.count)}`}
+      ${pools.length > 1 ? `<p class="field">Which cards</p>${seg('pool', pools, z.pool)}` : ''}
       <button type="button" class="btn-sketch btn-sketch--go btn-sketch--big" data-start>Start</button>
     </div>`;
-    const page = root.querySelector('.session');
-    page.addEventListener('click', (e) => {
-      for (const key of ['mode', 'direction', 'count']) {
+    root.querySelector('.session').addEventListener('click', (e) => {
+      for (const key of ['mode', 'direction', 'count', 'pool']) {
         const b = e.target.closest(`[data-${key}]`);
         if (b) { z[key] = key === 'count' ? Number(b.dataset[key]) : b.dataset[key]; renderQuiz(root); return; }
       }
-      if (e.target.closest('[data-start]')) {
-        const questions = buildQuiz(deck, { mode: z.mode, direction: z.direction, count: z.count, onlyIds: z.only });
-        if (!questions.length) { toast('No cards to quiz on.'); return; }
-        Object.assign(z, { phase: 'ask', questions, i: 0, right: 0, missed: [], answered: null });
-        renderQuiz(root);
-      }
+      if (e.target.closest('[data-start]')) startQuiz(root, deck, poolIds(deck, z.pool));
     });
-    page.querySelector('[data-only]')?.addEventListener('change', (e) => { z.only = e.target.checked ? lastMissed : null; });
     return;
   }
 
   if (z.phase === 'done') {
-    const pct = z.right / z.questions.length;
-    const missedCards = z.missed.map((id) => deck.cards.find((c) => c.id === id)).filter(Boolean);
+    clearTimer();
+    const total = z.total || 0;
+    const pct = total ? z.right / total : 0;
+    const missedCards = [...new Set(z.missed)].map((id) => deck.cards.find((c) => c.id === id)).filter(Boolean);
     await endScreen(root, {
-      mood: pct >= 0.8 ? 'happy' : pct >= 0.5 ? 'worried' : 'sad',
-      title: `${z.right} / ${z.questions.length}`,
+      mood: !total ? 'worried' : pct >= 0.8 ? 'happy' : pct >= 0.5 ? 'worried' : 'sad',
+      title: z.timed ? `${z.right} right` : `${z.right} / ${total}`,
       lines: [
-        pct === 1 ? 'Perfect score!' : pct >= 0.8 ? 'Nice work.' : 'Keep at it. Retrying the missed ones helps a lot.',
+        z.timed ? `${z.right} of ${total} in 60 seconds.${deck.bestLightning ? ` Best: ${deck.bestLightning}.` : ''}`
+          : pct === 1 ? 'Perfect score!' : pct >= 0.8 ? 'Nice work.' : 'Keep at it. Retrying the missed ones helps a lot.',
         missedCards.length ? `<ul class="missed-list">${missedCards.map((c) => `<li><b>${esc(isCloze(c) ? clozePrompt(c.front) : c.front)}</b> · ${esc(isCloze(c) ? clozeFilled(c.front) : c.back)}</li>`).join('')}</ul>` : '',
       ],
       buttons: `
@@ -608,26 +758,25 @@ export async function renderQuiz(root) {
         <button type="button" class="btn-sketch" data-again>new quiz</button>
         <a class="btn-plain" href="#/deck">back to the deck</a>`,
     });
+    if (z.timed && z.right > (deck.bestLightning || 0)) updateDeck(deck.id, { bestLightning: z.right });
     root.querySelector('.session').addEventListener('click', (e) => {
-      if (e.target.closest('[data-retry]')) {
-        const questions = buildQuiz(deck, { mode: z.mode, direction: z.direction, count: 0, onlyIds: z.missed });
-        Object.assign(z, { phase: 'ask', questions, i: 0, right: 0, missed: [], answered: null });
-        renderQuiz(root);
-      } else if (e.target.closest('[data-again]')) {
-        z.phase = 'setup';
-        renderQuiz(root);
-      }
+      if (e.target.closest('[data-retry]')) startQuiz(root, deck, [...new Set(z.missed)]);
+      else if (e.target.closest('[data-again]')) { z.phase = 'setup'; renderQuiz(root); }
     });
     return;
   }
 
+  if (z.phase === 'match') return renderMatch(root, deck, z);
+
+  // ----- one question (multiple choice / typed / lightning) -----
   const q = z.questions[z.i];
   const a = z.answered;
+  const left = z.timed ? Math.max(0, Math.ceil((z.endsAt - Date.now()) / 1000)) : 0;
   root.innerHTML = `
   <div class="session">
     <div class="session__top">
       <a class="btn-plain btn-plain--muted" href="#/deck">stop</a>
-      <p class="eyebrow">${z.i + 1} of ${z.questions.length} · ${z.right} right</p>
+      <p class="eyebrow">${z.timed ? `<span class="quiz-timer" data-timer>${left}s</span> · ${z.right} right` : `${z.i + 1} of ${z.questions.length} · ${z.right} right`}</p>
       <span class="spacer"></span>
     </div>
     <div class="flash flash--ask">${cardImg(q.img)}<span class="flash__front">${esc(q.ask)}</span>${q.note ? `<span class="flash__hint">${esc(q.note)}</span>` : ''}</div>
@@ -639,7 +788,7 @@ export async function renderQuiz(root) {
         <input name="answer" autocomplete="off" autocapitalize="off" spellcheck="false" ${a ? `value="${esc(a.given)}" disabled` : ''} placeholder="Type the answer">
         ${a ? '' : '<button type="submit" class="btn-sketch btn-sketch--go">check</button>'}
       </form>`}
-    ${a ? `
+    ${a && !z.timed ? `
       <p class="quiz-feedback ${a.ok ? 'is-right' : 'is-wrong'}">${a.ok ? 'Right!' : `Not quite. It's <b>${esc(q.answer)}</b>.`}</p>
       <div class="grade">
         ${!a.ok && q.kind === 'type' ? '<button type="button" class="btn-sketch" data-override>I was right</button>' : ''}
@@ -647,21 +796,33 @@ export async function renderQuiz(root) {
       </div>` : ''}
   </div>`;
 
-  const answer = (given, ok) => {
-    z.answered = { given, ok };
-    if (ok) z.right++; else z.missed.push(q.cardId);
-    play(ok ? 'pop' : 'stamp');
-    renderQuiz(root);
-  };
   const next = () => {
+    if (z.phase !== 'ask') return;
     z.answered = null;
     z.i++;
-    if (z.i >= z.questions.length) {
-      z.phase = 'done';
-      saveQuizResult(deck.id, { score: z.right, total: z.questions.length, missed: z.missed });
-    }
+    if (z.i >= z.questions.length) finishQuiz(deck, z);
     renderQuiz(root);
   };
+  const answer = (given, ok) => {
+    z.answered = { given, ok };
+    z.asked++;
+    if (ok) { z.right++; z.rightIds.push(q.cardId); } else z.missed.push(q.cardId);
+    play(ok ? 'pop' : 'stamp');
+    renderQuiz(root);
+    if (z.timed) setTimeout(() => { if (z.phase === 'ask' && z.answered) next(); }, ok ? 300 : 800);
+  };
+
+  clearTimer();
+  if (z.timed) {
+    quizTimer = setInterval(() => {
+      if (location.hash !== '#/quiz' || state.quiz !== z || z.phase !== 'ask') { clearTimer(); return; }
+      const secs = Math.max(0, Math.ceil((z.endsAt - Date.now()) / 1000));
+      const el = root.querySelector('[data-timer]');
+      if (el) el.textContent = `${secs}s`;
+      if (secs <= 0) { finishQuiz(deck, z); renderQuiz(root); }
+    }, 250);
+  }
+
   const page = root.querySelector('.session');
   page.querySelector('[data-typed]')?.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -676,6 +837,7 @@ export async function renderQuiz(root) {
     if (e.target.closest('[data-override]')) {
       z.right++;
       z.missed = z.missed.filter((id) => id !== q.cardId);
+      z.rightIds.push(q.cardId);
       z.answered = { ...a, ok: true };
       renderQuiz(root);
       return;
@@ -684,10 +846,63 @@ export async function renderQuiz(root) {
   });
   document.onkeydown = (e) => {
     if (location.hash !== '#/quiz') { document.onkeydown = null; return; }
-    if (z.answered && e.key === 'Enter') { e.preventDefault(); next(); }
+    if (z.answered && !z.timed && e.key === 'Enter') { e.preventDefault(); next(); }
     else if (!z.answered && q.kind === 'choice' && /^[1-4]$/.test(e.key) && q.options[Number(e.key) - 1] !== undefined) {
       const given = q.options[Number(e.key) - 1];
       answer(given, given === q.answer);
     }
   };
+  return undefined;
+}
+
+// ----- matching board -----
+function renderMatch(root, deck, z) {
+  const b = z.board;
+  const cls = (side, id) => [
+    'match__item',
+    b.done.includes(id) ? 'is-done' : '',
+    (side === 'L' ? b.selL : b.selR) === id ? 'is-sel' : '',
+    b.flash.includes(`${side}${id}`) ? 'is-wrong' : '',
+  ].filter(Boolean).join(' ');
+  root.innerHTML = `
+  <div class="session">
+    <div class="session__top">
+      <a class="btn-plain btn-plain--muted" href="#/deck">stop</a>
+      <p class="eyebrow">Matching · round ${z.round + 1} of ${z.rounds.length} · ${z.right} right</p>
+      <span class="spacer"></span>
+    </div>
+    <div class="match">
+      <div class="match__col">${b.left.map((x) => `<button type="button" class="${cls('L', x.id)}" data-ml="${esc(x.id)}"${b.done.includes(x.id) ? ' disabled' : ''}>${esc(x.text)}</button>`).join('')}</div>
+      <div class="match__col">${b.right.map((x) => `<button type="button" class="${cls('R', x.id)}" data-mr="${esc(x.id)}"${b.done.includes(x.id) ? ' disabled' : ''}>${esc(x.text)}</button>`).join('')}</div>
+    </div>
+  </div>`;
+  root.querySelector('.match').addEventListener('click', (e) => {
+    const l = e.target.closest('[data-ml]');
+    const r = e.target.closest('[data-mr]');
+    if (!l && !r) return;
+    if (l) b.selL = b.selL === l.dataset.ml ? null : l.dataset.ml;
+    if (r) b.selR = b.selR === r.dataset.mr ? null : r.dataset.mr;
+    b.flash = [];
+    if (b.selL && b.selR) {
+      if (b.selL === b.selR) {
+        const id = b.selL;
+        b.done.push(id);
+        if (b.bad.includes(id)) z.missed.push(id); else { z.right++; z.rightIds.push(id); }
+        play('pop');
+      } else {
+        if (!b.bad.includes(b.selL)) b.bad.push(b.selL);
+        b.flash = [`L${b.selL}`, `R${b.selR}`];
+        play('stamp');
+      }
+      b.selL = null;
+      b.selR = null;
+    }
+    if (b.done.length === b.left.length) {
+      z.round++;
+      if (z.round >= z.rounds.length) finishQuiz(deck, z); else newBoard(z);
+      renderQuiz(root);
+      return;
+    }
+    renderMatch(root, deck, z);
+  });
 }

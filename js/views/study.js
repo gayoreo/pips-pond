@@ -10,7 +10,7 @@ import {
 } from '../data/study.js';
 import { courseGrade, gradingOf, gpaOf, fmtPct, fmtGpa, DEFAULT_GPA_SCALE } from '../core/grades.js';
 import { openCourse, scoreTask } from './course.js';
-import { getDecks, dueCards, totalDue, reviewStreak, addDeck } from '../data/decks.js';
+import { getDecks, dueCards, totalDue, reviewStreak, addDeck, getGoal, setGoal, reviewedToday, deckMastery, isCramming } from '../data/decks.js';
 import { getArchive } from '../data/db.js';
 import { getProfile, saveProfile, readAll } from '../data/db.js';
 import { pushStatus } from '../data/push.js';
@@ -87,7 +87,7 @@ function todayScheduleHTML(s, today) {
   <section class="today-sched" aria-label="Today's schedule">
     <div class="today-sched__head">
       <p class="today-sched__title">Today</p>
-      ${canOut ? '<button type="button" class="btn-plain today-sched__out" data-out-of-class>I’m out of class</button>' : ''}
+      <span class="row">${canOut ? '<button type="button" class="btn-plain today-sched__out" data-out-of-class>I’m out of class</button>' : ''}<a class="btn-plain today-sched__out" href="#/bus">🚌 bus</a></span>
     </div>
     ${off ? `<p class="today-sched__off">🌴 ${esc(off.label || 'Break')} · no classes today</p>` : ''}
     <ul>${items.map((i) => {
@@ -231,9 +231,20 @@ function decksHTML(s) {
       <button type="button" class="btn-plain" data-deck-code>copy a shared deck</button>
     </section>`;
   }
+  const goal = getGoal();
+  const doneToday = reviewedToday();
+  const goalPct = Math.min(100, Math.round((doneToday / goal) * 100));
   return `
+    <section class="goal-card">
+      <div class="row">
+        <p class="hand">Today: <b>${doneToday}</b> of ${goal} cards${doneToday >= goal ? ' ✓' : ''}</p>
+        <button type="button" class="btn-plain" data-goal>change goal</button>
+      </div>
+      <div class="mastery"><span style="--w:${goalPct}%"></span></div>
+      ${streak > 1 ? `<p class="card__hint">Review streak: <b>${streak} days</b></p>` : ''}
+    </section>
     <div class="row">
-      ${streak > 1 ? `<p class="card__hint">Review streak: <b>${streak} days</b></p>` : '<span></span>'}
+      <span></span>
       <button type="button" class="btn-plain" data-deck-code>copy a shared deck</button>
     </div>
     <ul class="deck-list">${decks.map((d) => {
@@ -242,10 +253,26 @@ function decksHTML(s) {
       return `
       <li><button type="button" class="deck-row" data-deck="${esc(d.id)}" style="--course:${c?.color ?? 'var(--tape)'}">
         <span class="deck-row__name">${esc(d.name)}</span>
-        <span class="deck-row__meta">${[c ? esc(c.name) : '', `${d.cards.length} ${d.cards.length === 1 ? 'card' : 'cards'}`, d.lastQuiz ? `last quiz ${d.lastQuiz.score}/${d.lastQuiz.total}` : ''].filter(Boolean).join(' · ')}</span>
+        <span class="deck-row__meta">${[c ? esc(c.name) : '', `${d.cards.length} ${d.cards.length === 1 ? 'card' : 'cards'}`, d.cards.length ? `${deckMastery(d)}% mastered` : '', d.examDue && d.examDue >= todayKey() ? `📝 ${esc(formatShort(d.examDue))}${isCramming(d) ? ' cram' : ''}` : ''].filter(Boolean).join(' · ')}</span>
         ${due ? `<span class="deck-row__due">${due} due</span>` : ''}
       </button></li>`;
     }).join('')}</ul>`;
+}
+
+function openGoalSheet(root) {
+  const html = `
+    <label class="field">Cards a day<input type="number" name="goal" min="1" max="500" step="1" inputmode="numeric" value="${getGoal()}"></label>
+    <p class="card__hint">Reviews and quiz answers both count. 20 a day is a good start.</p>
+    <button type="button" class="btn-sketch btn-sketch--go" data-save>Save</button>`;
+  openSheet('Daily goal', html, (sheet, close) => {
+    sheet.querySelector('[data-save]').addEventListener('click', () => {
+      const n = Number(sheet.querySelector('[name="goal"]').value);
+      if (!(n >= 1)) { toast('Pick a number of cards.'); return; }
+      setGoal(n);
+      close();
+      renderStudy(root);
+    });
+  });
 }
 
 // ---------- grades ----------
@@ -470,6 +497,7 @@ export async function renderStudy(root) {
     if (t.closest('[data-add-block]')) return openBlockSheet(null);
     if (t.closest('[data-new-deck]')) return openNewDeckSheet();
     if (t.closest('[data-deck-code]')) return openCodeSheet();
+    if (t.closest('[data-goal]')) return openGoalSheet(root);
     const deck = t.closest('[data-deck]');
     if (deck) return openDeck(deck.dataset.deck);
     const block = t.closest('[data-block]');

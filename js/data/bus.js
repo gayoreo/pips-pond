@@ -258,8 +258,8 @@ export function planTrip(feed, { from, to } = {}) {
 
         if (stopsCount <= 0 || stopsCount >= routeStops.length) continue;
 
-        // Estimated transit ride time: ~1.8 mins per stop, minimum 2 mins
-        const rideMinutes = Math.max(2, Math.round(stopsCount * 1.8));
+        // Estimated transit ride time: ~1.6 mins per stop, minimum 2 mins
+        const rideMinutes = Math.max(2, Math.round(stopsCount * 1.6));
 
         // Get live arrival predictions for this route at the boarding stop
         let etas = [];
@@ -292,29 +292,32 @@ export function planTrip(feed, { from, to } = {}) {
           }
 
           if (activeEta) {
-            const propagatedMin = Math.round(Number(activeEta.min ?? 0) + minDistanceToBus * 1.8);
-            const ts = activeEta.timestamp ? (activeEta.timestamp + minDistanceToBus * 108) : (Math.floor(now / 1000) + propagatedMin * 60);
+            const propagatedMin = Math.round(Number(activeEta.min ?? 0) + minDistanceToBus * 1.6);
+            const ts = activeEta.timestamp ? (activeEta.timestamp + minDistanceToBus * 96) : (Math.floor(now / 1000) + propagatedMin * 60);
             etas = [{
               ...activeEta,
               min: propagatedMin,
-              eta: new Date(ts * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+              eta: propagatedMin === 0 ? 'Arriving now' : new Date(ts * 1000).toLocaleTimeString([], { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }),
               isPropagated: true,
             }];
           } else {
-            // Provide an estimated loop schedule arrival
+            // No active shuttle on this route right now - do not fabricate a fake 6 minute estimate
             etas = [{
-              min: 6,
-              eta: new Date(now + 6 * 60000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
-              isScheduled: true,
+              min: 9999,
+              eta: 'No active bus right now',
+              noActiveBus: true,
             }];
           }
         }
 
         for (const etaItem of etas) {
-          const busIn = Math.max(0, Math.round(Number(etaItem.min ?? 0)));
-          const leaveIn = busIn - walk;
-          const arriveIn = busIn + rideMinutes;
-          const arriveTime = new Date(now + arriveIn * 60000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+          const isNoActive = Boolean(etaItem.noActiveBus);
+          const busIn = isNoActive ? null : Math.max(0, Math.round(Number(etaItem.min ?? 0)));
+          const leaveIn = isNoActive ? null : (busIn - walk);
+          const arriveIn = isNoActive ? null : (busIn + rideMinutes);
+          const arriveTime = isNoActive
+            ? `~${rideMinutes} min ride`
+            : new Date(now + arriveIn * 60000).toLocaleTimeString([], { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' });
 
           trips.push({
             route: {
@@ -326,9 +329,9 @@ export function planTrip(feed, { from, to } = {}) {
             routeName: route.name,
             routeColor: route.color || 'var(--green-fill)',
             vehicle: String(etaItem.vehicle || ''),
-            eta: String(etaItem.eta || `${busIn}m`),
+            eta: String(etaItem.eta || (busIn !== null ? `${busIn}m` : 'No active bus')),
             arriveEta: arriveTime,
-            min: busIn,
+            min: isNoActive ? 9999 : busIn,
             busIn,
             leaveIn,
             arriveIn,
@@ -337,6 +340,8 @@ export function planTrip(feed, { from, to } = {}) {
             stopsCount,
             boardStop,
             alightStop,
+            noActiveBus: isNoActive,
+            isArrivingNow: busIn === 0,
           });
         }
       }

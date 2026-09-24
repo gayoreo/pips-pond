@@ -22,7 +22,7 @@ let currentRoot = null;
 const POPULAR_STOPS = [
   { name: 'STEM', match: /stem/i },
   { name: 'WDW', match: /wdw/i },
-  { name: 'Davis Center', match: /davis/i },
+  { name: 'Davis Center', match: /davis.*morrill|davis.*south|davis/i },
   { name: 'Redstone Apts', match: /redstone.*apt/i },
   { name: 'Coolidge Hall', match: /coolidge/i },
   { name: 'Billings Library', match: /billings/i },
@@ -91,7 +91,13 @@ function renderUI() {
   if (!currentRoot) return;
 
   const { feed, startStopId, endStopId, loading, error } = state;
-  const stops = feed?.stops || [];
+
+  // Filter stops to only those on active routes so orphaned/dead stops are never selectable
+  const routeStopIds = new Set();
+  (feed?.routes || []).forEach((r) => (r.stops || []).forEach((sId) => routeStopIds.add(String(sId))));
+  const rawStops = feed?.stops || [];
+  const stops = rawStops.filter((s) => routeStopIds.size === 0 || routeStopIds.has(String(s.id)));
+
   const startStop = stops.find((s) => String(s.id) === String(startStopId));
   const endStop = stops.find((s) => String(s.id) === String(endStopId));
 
@@ -101,9 +107,7 @@ function renderUI() {
   let isConnected = false;
 
   if (feed && startStopId && endStopId && startStopId !== endStopId) {
-    // Explicitly verify directionality using route.stops array:
-    // A route is only a valid connection if the endStop exists in the array after the startStop
-    // (or wraps around, since these are continuous loops).
+    // Explicitly verify directionality along route.stops loop
     matchingRoutes = (feed.routes || []).map((r) => {
       const routeStops = (r.stops || []).map(String);
       if (routeStops.length < 2) return null;
@@ -151,11 +155,44 @@ function renderUI() {
     color: best?.routeColor || matchingRoutes[0]?.color || 'var(--green-fill)',
   } : null;
 
-  // Quick preset chips that match actual stops in this feed
+  // Quick preset chips: prioritize stops that connect with the current startStop
   const presetChips = POPULAR_STOPS.map((p) => {
-    const found = stops.find((s) => p.match.test(s.name));
-    return found ? { label: p.name, stopId: String(found.id) } : null;
+    const candidates = stops.filter((s) => p.match.test(s.name) && String(s.id) !== String(startStopId));
+    if (candidates.length === 0) return null;
+
+    // Prefer a stop sharing a route with startStop
+    let chosen = candidates.find((s) => {
+      return (feed?.routes || []).some((r) => {
+        const rStops = (r.stops || []).map(String);
+        return rStops.includes(String(startStopId)) && rStops.includes(String(s.id));
+      });
+    });
+    if (!chosen) chosen = candidates[0];
+    return { label: p.name, stopId: String(chosen.id) };
   }).filter(Boolean);
+
+  // Cross-route connection check for helpful suggestion if !isConnected
+  let transferHint = null;
+  if (!isConnected && startStop && endStop && startStopId !== endStopId) {
+    const startRoutes = (feed?.routes || []).filter((r) => (r.stops || []).map(String).includes(String(startStopId)));
+    const endRoutes = (feed?.routes || []).filter((r) => (r.stops || []).map(String).includes(String(endStopId)));
+    if (startRoutes.length > 0 && endRoutes.length > 0) {
+      // Find hub stops served by startRoutes
+      const hubStops = stops.filter((s) => {
+        const sId = String(s.id);
+        const inStart = startRoutes.some((r) => (r.stops || []).map(String).includes(sId));
+        const inEnd = endRoutes.some((r) => (r.stops || []).map(String).includes(sId));
+        return inStart && inEnd;
+      });
+      if (hubStops.length > 0) {
+        transferHint = {
+          startRouteName: startRoutes[0].name,
+          endRouteName: endRoutes[0].name,
+          hubStop: hubStops[0],
+        };
+      }
+    }
+  }
 
   currentRoot.innerHTML = `
     <div class="deck-page stack">
@@ -266,9 +303,21 @@ function renderUI() {
           <div class="card bus-result">
             <p class="hand">No direct loop connection</p>
             <p class="card__hint">
-              No active campus shuttle connects <b>${esc(startStop?.name || 'origin')}</b> directly to <b>${esc(endStop?.name || 'destination')}</b> in this direction.
+              No single campus shuttle connects <b>${esc(startStop?.name || 'origin')}</b> directly to <b>${esc(endStop?.name || 'destination')}</b> in this direction.
             </p>
-            <p class="card__hint">Try swapping direction or picking another stop.</p>
+            ${transferHint ? `
+              <div style="margin-top: 10px; padding: 10px; background: var(--paper-warm); border-radius: 8px; border: 1px dashed var(--line);">
+                <p style="font-size: 13px; font-weight: 700; margin-bottom: 4px;">💡 Nearby Connection / Transfer:</p>
+                <p style="font-size: 13px; color: var(--ink);">
+                  Take <b>${esc(transferHint.startRouteName)}</b> to <b>${esc(transferHint.hubStop.name)}</b> (shared hub with <b>${esc(transferHint.endRouteName)}</b>).
+                </p>
+                <button type="button" class="btn-sketch" data-quick-dest="${esc(transferHint.hubStop.id)}" style="font-size: 12px; padding: 4px 10px; margin-top: 6px;">
+                  Switch destination to ${esc(transferHint.hubStop.name)}
+                </button>
+              </div>
+            ` : `
+              <p class="card__hint">Try tapping <b>⇅ Swap Stops</b> or picking another stop.</p>
+            `}
           </div>
         ` : ''}
 
@@ -284,39 +333,65 @@ function renderUI() {
         <!-- Best Primary Option -->
         ${best ? `
           <div class="card bus-result">
-            <p class="bus-take" style="--route: ${esc(best.routeColor)}">
-              Take <b>${esc(best.routeName)}</b> in <b>${best.busIn} min</b>
-            </p>
-            <p class="bus-route">
-              <b>${best.stopsCount}</b> ${best.stopsCount === 1 ? 'stop' : 'stops'} · ~<b>${best.rideMinutes} min</b> ride to ${esc(endStop?.name || 'destination')}
-            </p>
-            <p class="card__hint">
-              Departs ${esc(startStop?.name || 'Stop')} around <b>${esc(best.eta)}</b> · Reaches ${esc(endStop?.name || 'Destination')} ~<b>${esc(best.arriveEta)}</b>
-              ${best.vehicle ? ` · Bus #${esc(best.vehicle)}` : ''}
-            </p>
+            ${best.noActiveBus ? `
+              <p class="bus-take" style="--route: ${esc(best.routeColor)}">
+                Route: <b>${esc(best.routeName)}</b>
+              </p>
+              <div style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; background: var(--paper-warm); border-radius: 6px; margin: 4px 0 6px;">
+                <span style="font-size: 14px;">⚠️</span>
+                <span style="font-size: 13px; font-weight: 700; color: var(--muted);">No active shuttle on this route right now</span>
+              </div>
+              <p class="bus-route">
+                <b>${best.stopsCount}</b> ${best.stopsCount === 1 ? 'stop' : 'stops'} · ~<b>${best.rideMinutes} min</b> ride when in service
+              </p>
+            ` : best.isArrivingNow || best.busIn === 0 ? `
+              <p class="bus-take" style="--route: ${esc(best.routeColor)}">
+                Take <b>${esc(best.routeName)}</b> · <span style="background: #16a34a; color: #fff; padding: 2px 9px; border-radius: 6px; font-size: 0.85em; font-weight: 800; display: inline-block;">Arriving now! 🚌</span>
+              </p>
+              <p class="bus-route">
+                <b>${best.stopsCount}</b> ${best.stopsCount === 1 ? 'stop' : 'stops'} · ~<b>${best.rideMinutes} min</b> ride to ${esc(endStop?.name || 'destination')}
+              </p>
+              <p class="card__hint">
+                At ${esc(startStop?.name || 'Stop')} now · Reaches ${esc(endStop?.name || 'Destination')} ~<b>${esc(best.arriveEta)}</b>
+                ${best.vehicle ? ` · Bus #${esc(best.vehicle)}` : ''}
+              </p>
+            ` : `
+              <p class="bus-take" style="--route: ${esc(best.routeColor)}">
+                Take <b>${esc(best.routeName)}</b> in <b>${best.busIn} min</b>
+              </p>
+              <p class="bus-route">
+                <b>${best.stopsCount}</b> ${best.stopsCount === 1 ? 'stop' : 'stops'} · ~<b>${best.rideMinutes} min</b> ride to ${esc(endStop?.name || 'destination')}
+              </p>
+              <p class="card__hint">
+                Departs ${esc(startStop?.name || 'Stop')} around <b>${esc(best.eta)}</b> · Reaches ${esc(endStop?.name || 'Destination')} ~<b>${esc(best.arriveEta)}</b>
+                ${best.vehicle ? ` · Bus #${esc(best.vehicle)}` : ''}
+              </p>
+            `}
           </div>
         ` : ''}
 
         <!-- Secondary / Backup Option -->
-        ${backup ? `
+        ${backup && !backup.noActiveBus ? `
           <div class="card bus-result bus-result--backup">
             <p class="bus-take" style="--route: ${esc(backup.routeColor)}">
-              Next bus: <b>${esc(backup.routeName)}</b> in <b>${backup.busIn} min</b>
+              ${backup.busIn === 0 ? `Next bus: <b>${esc(backup.routeName)}</b> (Arriving now)` : `Next bus: <b>${esc(backup.routeName)}</b> in <b>${backup.busIn} min</b>`}
             </p>
             <p class="bus-route">
               Departs ${esc(backup.eta)} · Arrives destination ~<b>${esc(backup.arriveEta)}</b> (${backup.stopsCount} stops)
+              ${backup.vehicle ? ` · Bus #${esc(backup.vehicle)}` : ''}
             </p>
           </div>
         ` : ''}
 
         <!-- Later Trips if any -->
-        ${remainingTrips.length > 0 ? `
+        ${remainingTrips.filter((t) => !t.noActiveBus).length > 0 ? `
           <div class="stack" style="margin-top: 8px;">
             <p class="card__hint">Later departures:</p>
-            ${remainingTrips.slice(0, 3).map((t) => `
+            ${remainingTrips.filter((t) => !t.noActiveBus).slice(0, 3).map((t) => `
               <div class="card bus-result bus-result--backup" style="opacity: 0.85;">
                 <p class="bus-take" style="--route: ${esc(t.routeColor)}; font-size: 15px;">
                   <b>${esc(t.routeName)}</b> in <b>${t.busIn} min</b> (${esc(t.eta)})
+                  ${t.vehicle ? ` · Bus #${esc(t.vehicle)}` : ''}
                 </p>
                 <p class="bus-route" style="font-size: 13px;">
                   Arrives ~${esc(t.arriveEta)} · ${t.stopsCount} stops

@@ -135,7 +135,7 @@ async function openFriendSheet(f, rerender) {
 
   const html = `
     <div class="fs-head">
-      <span class="friend__frog fs-frog is-${mood}">${frogSVG(mood, f.frog_name || 'Pip')}</span>
+      <span class="friend__frog fs-frog is-${mood}">${frogSVG(mood, f.frog_name || 'Pip', { companion: f.companion || 'frog' })}</span>
       <div>
         <p class="hand fs-name">${esc(whoName(f))}</p>
         <p class="muted">${f.username ? `@${esc(f.username)} · ` : ''}${esc(f.frog_name || 'Pip')} is ${esc((MOOD_LABEL[mood] ?? mood).toLowerCase())}${f.mood_at ? `, as of ${esc(ago(f.mood_at))}` : ''}</p>
@@ -273,7 +273,7 @@ function friendCard(f) {
   return `
   <li class="friend">
     <button type="button" class="friend__open" data-friend="${esc(f.id)}" aria-label="Open ${esc(whoName(f))}">
-      <span class="friend__frog is-${mood}">${frogSVG(mood, f.frog_name || 'Pip')}</span>
+      <span class="friend__frog is-${mood}">${frogSVG(mood, f.frog_name || 'Pip', { companion: f.companion || 'frog' })}</span>
       <span class="friend__who">
         <b class="hand">${esc(whoName(f))}</b>
         <span class="muted">${esc(f.frog_name || 'Pip')} · ${MOOD_LABEL[mood] ?? mood}</span>

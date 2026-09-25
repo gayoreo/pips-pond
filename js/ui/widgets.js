@@ -61,14 +61,14 @@ export function stampsHTML(ex, resets) {
 
 // The framed pond with lily pads + the frog. `button` makes the frog tappable (to pet it).
 // `dancing` makes the frog do a little dance; `visitor` ({ mood, name }) hops a friend's frog in.
-export function pondSceneHTML({ mood, name, outfit, tag = true, button = false, extraClass = '', dancing = false, visitor = null }) {
-  const frog = frogSVG(mood, name, { outfit });
+export function pondSceneHTML({ mood, name, outfit, button, tag = true, extraClass = '', dancing = false, visitor = null, companion = 'frog' }) {
+  const frog = frogSVG(mood, name, { outfit, companion });
   const cls = `frog is-${mood}${dancing ? ' is-dancing' : ''}`;
   const frogEl = button
     ? `<button type="button" class="${cls} frog-btn" data-pet aria-label="Pet ${esc(name)}">${frog}</button>`
     : `<div class="${cls}">${frog}</div>`;
   const visitorEl = visitor
-    ? `<div class="frog frog--visitor is-${visitor.mood ?? 'happy'}" aria-label="${esc(visitor.name || 'A friend')} visiting">${frogSVG(visitor.mood ?? 'happy', visitor.name || 'Pip')}</div>`
+    ? `<div class="frog frog--visitor is-${visitor.mood ?? 'happy'}" aria-label="${esc(visitor.name || 'A friend')} visiting">${frogSVG(visitor.mood ?? 'happy', visitor.name || 'Pip', { companion: visitor.companion || 'frog' })}</div>`
     : '';
   return `
   <div class="pond ${extraClass}${visitor ? ' has-visitor' : ''}">

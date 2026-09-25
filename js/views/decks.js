@@ -524,10 +524,10 @@ function openDeckSettings(id) {
 
 // ---------- shared end screen ----------
 async function endScreen(root, { mood, title, lines, buttons }) {
-  const { frogName } = await getProfile();
+  const profile = await getProfile();
   root.innerHTML = `
   <div class="session session--end">
-    <div class="frog is-${mood}">${frogSVG(mood, frogName)}</div>
+    <div class="frog is-${mood}">${frogSVG(mood, profile.frogName || 'Pip', { companion: profile.companion })}</div>
     <h1 class="page-title">${esc(title)}</h1>
     ${lines.map((l) => `<p>${l}</p>`).join('')}
     <div class="stack">${buttons}</div>

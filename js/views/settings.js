@@ -170,13 +170,19 @@ export async function renderSettings(root) {
     </section>`) : ''}
 
     <section class="card">
-      <h2 class="card__title">You &amp; your frog</h2>
+      <h2 class="card__title">You &amp; your companion</h2>
       <div class="grid-2">
         <label class="field">Your nickname<input id="p-nick" maxlength="24" autocomplete="nickname" value="${esc(profile.nickname)}"></label>
-        <label class="field">Frog’s name<input id="p-frog" maxlength="24" autocomplete="off" value="${esc(profile.frogName)}"></label>
+        <label class="field">Companion s name<input id="p-frog" maxlength="24" autocomplete="off" value="${esc(profile.frogName)}"></label>
       </div>
+      <label class="field">Companion style
+        <select id="p-companion">
+          <option value="frog"${profile.companion !== 'sandshrew' ? ' selected' : ''}>Pip (Frog)</option>
+          <option value="sandshrew"${profile.companion === 'sandshrew' ? ' selected' : ''}>Sandshrew</option>
+        </select>
+      </label>
       <div class="row">
-        <button type="button" class="btn-sketch" id="p-save">Save names</button>
+        <button type="button" class="btn-sketch" id="p-save">Save details</button>
         <a class="btn-plain" href="#/welcome">Replay tutorial</a>
       </div>
     </section>
@@ -308,7 +314,8 @@ export async function renderSettings(root) {
 
   root.querySelector('#p-save').addEventListener('click', async () => {
     const frogName = root.querySelector('#p-frog').value.trim() || 'Pip';
-    await saveProfile({ nickname: root.querySelector('#p-nick').value.trim(), frogName });
+    const companion = root.querySelector('#p-companion').value;
+    await saveProfile({ nickname: root.querySelector('#p-nick').value.trim(), frogName, companion });
     toast(`Hi from ${frogName}!`);
   });
 

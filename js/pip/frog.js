@@ -78,7 +78,20 @@ function eyes(mood) {
     <circle cx="${rx + 2}" cy="${ry - 2}" r="2" fill="#fff" stroke="none"/>`;
 }
 
-export function frogSVG(mood = 'happy', name = 'Pip', { outfit = null } = {}) {
+export function frogSVG(mood = 'happy', name = 'Pip', { outfit = null, companion = 'frog' } = {}) {
+  // Sandshrew Companion Override
+  if (companion === 'sandshrew') {
+    let url = 'https://img.pokemondb.net/sprites/ruby-sapphire/normal/sandshrew.png';
+    
+    // Curl up into a ball for resting or stressed moods
+    if (mood === 'sleeping' || mood === 'sad' || mood === 'worried') {
+      url = 'https://img.pokemondb.net/sprites/diamond-pearl/normal/sandshrew.png';
+    }
+    
+    return `<img src="${url}" alt="${esc(name)} is ${DESCRIBE[mood] ?? 'happy'}" style="image-rendering: pixelated; image-rendering: crisp-edges; width: 100%; height: 100%; object-fit: contain;">`;
+  }
+
+  // Classic Pip the Frog
   const skin = SKIN[mood] ?? SKIN.happy;
   return `
 <svg viewBox="0 0 160 160" width="160" height="160" role="img" aria-label="${esc(name)} looks ${DESCRIBE[mood] ?? 'happy'}">

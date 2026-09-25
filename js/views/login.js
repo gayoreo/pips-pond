@@ -16,10 +16,11 @@ import { play } from '../ui/sound.js';
 export const PREFILL_KEY = 'pond:login-prefill';
 
 export function authHero(mood, line) {
-  const name = readAll().profile?.frogName || 'Pip';
+  const profile = readAll().profile || {};
+  const name = profile.frogName || 'Pip';
   return `
   <div class="auth__hero">
-    ${pondSceneHTML({ mood, name, outfit: outfitFor(todayKey()), tag: false })}
+    ${pondSceneHTML({ mood, name, outfit: outfitFor(todayKey()), tag: false, companion: profile.companion })}
     <p class="bubble" aria-live="polite">${esc(line)}</p>
   </div>`;
 }

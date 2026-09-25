@@ -47,6 +47,13 @@ export async function loadBus() {
 export const fetchRoutes = async () => (await loadBus()).routes || [];
 export const fetchStops = async () => (await loadBus()).stops || [];
 
+export async function fetchPredictions(stopId) {
+  const feed = await loadBus();
+  if (!feed?.stops) return [];
+  const stop = feed.stops.find((s) => String(s.id) === String(stopId));
+  return stop?.etas || [];
+}
+
 export function planTrip(feed, { from, to }) {
   if (!feed?.routes || !feed?.stops) return [];
 

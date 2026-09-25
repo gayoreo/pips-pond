@@ -110,8 +110,8 @@ export function frogSVG(mood = 'happy', name = 'Pip', { outfit = null, companion
         <ellipse cx="38" cy="128" rx="14" ry="7" fill="#7CC96B"/>
         <ellipse cx="122" cy="128" rx="14" ry="7" fill="#7CC96B"/>
       </g>
-      <!-- 2. Sandshrew rendered AFTER so she sits ON TOP of the pad -->
-      <foreignObject x="10" y="10" width="140" height="140">
+      <!-- 2. Sandshrew rendered AFTER with y="20" to slide her forward onto the pad -->
+      <foreignObject x="10" y="20" width="140" height="140">
         <div xmlns="http://www.w3.org/1999/xhtml" style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;">
           <img src="${url}" alt="" style="width: 120px; height: 120px; image-rendering: pixelated; image-rendering: crisp-edges; object-fit: contain; ${customStyle}" />
         </div>

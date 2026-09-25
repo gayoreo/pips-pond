@@ -1,4 +1,5 @@
 import { todayKey } from '../core/dates.js';
+import { cloudEnabled, userNow, sb } from './supabase.js';
 
 const KEY = 'pips-pond:v1';
 const THEME_KEY = 'pips-pond:theme';
@@ -134,6 +135,23 @@ export async function saveProfile(patch) {
   data.profile = { ...DEFAULT_PROFILE, ...data.profile, ...patch };
   touch(data, 'prefs');
   save(data);
+
+  // Sync to Supabase
+  if (cloudEnabled && userNow()) {
+    const payload = {};
+    if (patch.nickname !== undefined) payload.nickname = patch.nickname;
+    if (patch.frogName !== undefined) payload.frog_name = patch.frogName;
+    if (patch.mood !== undefined) payload.mood = patch.mood;
+    if (patch.moodAt !== undefined) payload.mood_at = patch.moodAt;
+    
+    // The Sandshrew companion toggle
+    if (patch.companion !== undefined) payload.companion = patch.companion; 
+
+    if (Object.keys(payload).length > 0) {
+      // Connect to Supabase and send the payload
+      sb().then(client => client.from('profiles').update(payload).eq('id', userNow().id).then());
+    }
+  }
 }
 
 // ---------- semesters ----------

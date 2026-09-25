@@ -4,7 +4,7 @@ import { todayKey, formatLong, formatShort, addDays, isDayOff } from '../core/da
 import { reportStats, nextSemesterDefaults } from '../core/semester.js';
 import { moodFor, reactionMood } from '../pip/mood.js';
 import { pipLine, pick, PET } from '../pip/lines.js';
-import { outfitFor } from '../pip/frog.js';
+import { outfitFor, frogSVG } from '../pip/frog.js';
 import { esc, money, count, plural } from '../ui/dom.js';
 import { noteHTML, stampsHTML, pondSceneHTML } from '../ui/widgets.js';
 import { reportHTML } from '../ui/report.js';
@@ -346,8 +346,31 @@ export async function renderPond(root) {
       frog.insertAdjacentHTML('beforeend', '<svg class="heart" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-7-4.5-9.5-9A5.5 5.5 0 0 1 12 6a5.5 5.5 0 0 1 9.5 6C19 16.5 12 21 12 21z"/></svg>');
       setTimeout(() => frog.querySelector('.heart')?.remove(), 900);
       says.textContent = `"${pick(PET, pets + Date.now() % 7, profile.nickname)}"`;
-      play(pets === 1 ? 'splash' : 'ribbit');
-      if (pets === 10) play('chorus'); // easter egg: pet Pip 10 times in one visit
+      
+      // Custom Audio Routing
+      if (pets === 1) {
+        play('splash');
+      } else {
+        play(profile.companion === 'sandshrew' ? 'sandshrew' : 'ribbit');
+      }
+      
+      // 10 Pets Easter Egg
+      if (pets === 10) {
+        if (profile.companion === 'sandshrew') {
+          // Swap out the sprite for the jumping animation
+          frog.innerHTML = frogSVG('jumping', profile.frogName, { outfit: outfitFor(today), companion: 'sandshrew' });
+          
+          // Revert back to the normal mood sprite after 2.5 seconds
+          setTimeout(() => {
+            if (document.body.contains(frog)) {
+              frog.innerHTML = frogSVG(mood, profile.frogName, { outfit: outfitFor(today), companion: profile.companion });
+            }
+          }, 2500);
+        } else {
+          // Classic Pip chorus
+          play('chorus'); 
+        }
+      }
       return;
     }
     if (e.target.closest('[data-recap-ok]')) return saveProfile({ recapSeen: b.weekStart });

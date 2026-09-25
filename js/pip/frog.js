@@ -79,16 +79,44 @@ function eyes(mood) {
 }
 
 export function frogSVG(mood = 'happy', name = 'Pip', { outfit = null, companion = 'frog' } = {}) {
-  // Sandshrew Companion Override
+  // Sandshrew Companion Override (Animated Sprite Sheet)
   if (companion === 'sandshrew') {
-    let url = 'https://img.pokemondb.net/sprites/ruby-sapphire/normal/sandshrew.png';
-    
-    // Curl up into a ball for resting or stressed moods
-    if (mood === 'sleeping' || mood === 'sad' || mood === 'worried') {
-      url = 'https://img.pokemondb.net/sprites/diamond-pearl/normal/sandshrew.png';
+    let yOffset = 0;
+    let startX = 0;
+    let animationTag = '';
+
+    if (mood === 'eating') {
+      yOffset = -42; // Row 2 (Sitting)
+      startX = 0; 
+    } else if (mood === 'sleeping') {
+      yOffset = -75; // Row 3
+      startX = -180; // 5th frame (Curled in a ball)
+    } else if (mood === 'sad' || mood === 'worried') {
+      yOffset = -106; // Row 4 (Sad/Idle)
+      // 2 frames looping slowly
+      animationTag = `<animate attributeName="x" values="0;-45;0" dur="1.5s" calcMode="discrete" repeatCount="indefinite" />`;
+    } else if (mood === 'shocked') {
+      yOffset = -106; // Row 4 (Shocked/Arms up)
+      // 2 frames looping fast (panic!)
+      animationTag = `<animate attributeName="x" values="-90;-135;-90" dur="0.4s" calcMode="discrete" repeatCount="indefinite" />`;
+    } else if (mood === 'jumping') {
+      yOffset = -75; // Row 3 (Jumping/Rolling)
+      startX = 0;
+      // 4 frames looping quickly for an active jump/roll
+      animationTag = `<animate attributeName="x" values="0;-45;-90;-135;0" dur="0.6s" calcMode="discrete" repeatCount="indefinite" />`;
+    } else {
+      // happy / default (Row 1)
+      yOffset = 0;
+      // 3 frames looping back and forth for the idle stance
+      animationTag = `<animate attributeName="x" values="0;-45;-90;-45" dur="0.8s" calcMode="discrete" repeatCount="indefinite" />`;
     }
-    
-    return `<img src="${url}" alt="${esc(name)} is ${DESCRIBE[mood] ?? 'happy'}" style="image-rendering: pixelated; image-rendering: crisp-edges; width: 100%; height: 100%; object-fit: contain;">`;
+
+    return `
+    <svg viewBox="0 0 45 40" width="160" height="160" role="img" aria-label="${esc(name)} is ${DESCRIBE[mood] ?? 'happy'}">
+      <image href="assets/sprite-no-bg-326x146.png" x="${startX}" y="${yOffset}" width="326" height="146" style="image-rendering: pixelated; image-rendering: crisp-edges;">
+        ${animationTag}
+      </image>
+    </svg>`;
   }
 
   // Classic Pip the Frog

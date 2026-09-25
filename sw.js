@@ -1,5 +1,5 @@
 // Bump VERSION whenever you add, rename or remove files.
-const VERSION = 'v19';
+const VERSION = 'v20';
 const CACHE = `pips-pond-${VERSION}`;
 const FONT_CACHE = 'pips-pond-fonts';
 const LIB_CACHE = 'pips-pond-libs';
@@ -23,7 +23,7 @@ const SHELL = [
   './js/views/settings.js', './js/views/tutorial.js', './js/views/semesters.js', './js/views/data.js',
   './js/views/login.js', './js/views/signup.js', './js/views/friends.js', './js/views/addFriend.js',   './js/views/study.js', './js/views/courseSetup.js', './js/views/decks.js', './js/ui/sheet.js',
   './assets/icons/icon-180.png', './assets/icons/icon-192.png', './assets/icons/icon-512.png',
-  './assets/sounds/ribbit.mp3', './assets/sounds/splash.mp3', './assets/sounds/chorus.mp3',
+  './assets/sounds/ribbit.mp3', './assets/sounds/splash.mp3', './assets/sounds/chorus.mp3', './assets/sounds/sandshrew.mp3',
   './js/data/study.js', './js/data/decks.js', './js/core/grades.js', './js/views/course.js', './js/data/dining.js', './js/views/dining.js', './js/data/share.js', './js/data/bus.js', './js/views/bus.js',
 ];
 

@@ -79,12 +79,12 @@ function eyes(mood) {
 }
 
 export function frogSVG(mood = 'happy', name = 'Pip', { outfit = null, companion = 'frog' } = {}) {
-  // Sandshrew Companion Override (Static Moods + GIF Animations)
+  // Sandshrew Companion Override (Lilypad Base + Static Moods + GIFs)
   if (companion === 'sandshrew') {
     let url = 'assets/sandshrew/happy.png'; // Default / Happy
 
     if (mood === 'eating') {
-      url = 'assets/sandshrew/eating.gif';
+      url = 'assets/sandshrew/eating.png';
     } else if (mood === 'sleeping') {
       url = 'assets/sandshrew/sleeping.png'; // Curled ball
     } else if (mood === 'sad' || mood === 'worried') {
@@ -98,12 +98,23 @@ export function frogSVG(mood = 'happy', name = 'Pip', { outfit = null, companion
     }
 
     return `
-    <div style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;">
-      <img src="${url}" alt="${esc(name)} is ${DESCRIBE[mood] ?? 'happy'}" style="image-rendering: pixelated; image-rendering: crisp-edges; max-width: 100%; max-height: 100%; object-fit: contain;">
-    </div>`;
+    <svg viewBox="0 0 160 160" width="160" height="160" role="img" aria-label="${esc(name)} is ${DESCRIBE[mood] ?? 'happy'}">
+      <g filter="url(#wobble)" stroke="#2F5D2B" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+        <!-- Lilypad Base -->
+        <path d="M14 134 C14 118 46 112 80 112 C114 112 146 118 146 134 C146 148 114 154 80 154 C46 154 14 148 14 134 Z" fill="#86C29B"/>
+        <path d="M80 136 L120 126 M80 136 L42 127" fill="none" stroke="#5E9A73" stroke-width="2"/>
+        <ellipse cx="38" cy="128" rx="14" ry="7" fill="#7CC96B"/>
+        <ellipse cx="122" cy="128" rx="14" ry="7" fill="#7CC96B"/>
+      </g>
+      <foreignObject x="10" y="10" width="140" height="140">
+        <div xmlns="http://www.w3.org/1999/xhtml" style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;">
+          <img src="${url}" alt="" style="width: 120px; height: 120px; image-rendering: pixelated; image-rendering: crisp-edges; object-fit: contain;" />
+        </div>
+      </foreignObject>
+    </svg>`;
   }
 
-  // Classic Pip the Frog (Leave untouched)
+  // Classic Pip the Frog
   const skin = SKIN[mood] ?? SKIN.happy;
   return `
 <svg viewBox="0 0 160 160" width="160" height="160" role="img" aria-label="${esc(name)} looks ${DESCRIBE[mood] ?? 'happy'}">

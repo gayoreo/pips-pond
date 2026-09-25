@@ -60,7 +60,6 @@ export function stampsHTML(ex, resets) {
 }
 
 // The framed pond with lily pads + the frog. `button` makes the frog tappable (to pet it).
-// `dancing` makes the frog do a little dance; `visitor` ({ mood, name }) hops a friend's frog in.
 export function pondSceneHTML({ mood, name, outfit, button, tag = true, extraClass = '', dancing = false, visitor = null, companion = 'frog' }) {
   const frog = frogSVG(mood, name, { outfit, companion });
   const cls = `frog is-${mood}${dancing ? ' is-dancing' : ''}`;

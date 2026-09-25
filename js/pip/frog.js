@@ -86,28 +86,23 @@ export function frogSVG(mood = 'happy', name = 'Pip', { outfit = null, companion
     let animationTag = '';
 
     if (mood === 'eating') {
-      yOffset = -42; // Row 2 (Sitting)
-      startX = 0; 
+      yOffset = -42;
+      startX = 0;
     } else if (mood === 'sleeping') {
-      yOffset = -75; // Row 3
-      startX = -180; // 5th frame (Curled in a ball)
+      yOffset = -75;
+      startX = -180;
     } else if (mood === 'sad' || mood === 'worried') {
-      yOffset = -106; // Row 4 (Sad/Idle)
-      // 2 frames looping slowly
+      yOffset = -106;
       animationTag = `<animate attributeName="x" values="0;-45;0" dur="1.5s" calcMode="discrete" repeatCount="indefinite" />`;
     } else if (mood === 'shocked') {
-      yOffset = -106; // Row 4 (Shocked/Arms up)
-      // 2 frames looping fast (panic!)
+      yOffset = -106;
       animationTag = `<animate attributeName="x" values="-90;-135;-90" dur="0.4s" calcMode="discrete" repeatCount="indefinite" />`;
     } else if (mood === 'jumping') {
-      yOffset = -75; // Row 3 (Jumping/Rolling)
+      yOffset = -75;
       startX = 0;
-      // 4 frames looping quickly for an active jump/roll
       animationTag = `<animate attributeName="x" values="0;-45;-90;-135;0" dur="0.6s" calcMode="discrete" repeatCount="indefinite" />`;
     } else {
-      // happy / default (Row 1)
       yOffset = 0;
-      // 3 frames looping back and forth for the idle stance
       animationTag = `<animate attributeName="x" values="0;-45;-90;-45" dur="0.8s" calcMode="discrete" repeatCount="indefinite" />`;
     }
 

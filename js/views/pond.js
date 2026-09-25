@@ -34,12 +34,12 @@ function signinNudgeHTML(profile) {
 }
 
 const PING_LINE = {
-  snack: (who) => `${who} sent a snack! *nom nom* 🍪`,
+  snack: (who) => `${who} sent a snack! *nom nom* 😋`,
   cheer: (who) => `${who} is cheering you on! 📣`,
-  visit: (who) => `${who}’s frog hopped over to say hi! 🐸`,
-  dance: (who) => `${who}’s frog is doing a silly dance! 💃`,
-  study: (who, p) => `${who} wants to study together${p?.note ? ` ${p.note}` : ''}! 📖`,
-  meal: (who, p) => `${who} wants to grab a meal${p?.note ? ` ${p.note}` : ''}! 🍽`,
+  visit: (who) => `${who}'s companion hopped over to say hi! 🐸`,
+  dance: (who) => `${who}'s companion is doing a silly dance! ✨`,
+  study: (who, p) => `${who} wants to study together${p?.note ? ` (${p.note})` : ''}! 📚`,
+  meal: (who, p) => `${who} wants to grab a meal${p?.note ? ` (${p.note})` : ''}! 🍜`,
 };
 
 function pingsHTML() {
@@ -89,7 +89,7 @@ function favRowHTML(favorites) {
   return `
   <div class="fav-row">
     <span class="fav-row__label">favs:</span>
-    ${favorites.slice(0, 4).map((f) => `<button type="button" class="fav fav--${f.type}" data-fav="${esc(f.id)}">${esc(f.name)} ${esc(describe(f.type, f.amount))}</button>`).join('')}
+    ${favorites.slice(0, 4).map((f) => `<button type="button" class="fav fav--${f.type}" data-fav="${esc(f.id)}">${esc(f.name)}${esc(describe(f.type, f.amount))}</button>`).join('')}
     <a class="fav-row__edit" href="#/favorites">edit</a>
   </div>`;
 }
@@ -109,11 +109,11 @@ function recapHTML(settings, entries, b, profile) {
   const last = budget(settings, entries, to);
   const onPace = last.points.leftWeek >= -0.004 && last.swipes.leftWeek >= 0;
   return `
-  <section class="recap" aria-label="Last week’s recap">
+  <section class="recap" aria-label="Last week's recap">
     <p class="recap__title">Last week</p>
     <p class="recap__body">${sw + pt + ex === 0
       ? 'Nothing logged last week. If you ate on campus, add it from the Log tab!'
-      : `${plural(sw, 'swipe')} · ${money(pt)} points · ${plural(ex, 'exchange')}. ${onPace ? 'Right on pace!' : 'A little over, but this week re-balanced.'}`}</p>
+      : `${plural(sw, 'swipe')} •${money(pt)} points • ${plural(ex, 'exchange')}.${onPace ? 'Right on pace!' : 'A little over, but this week re-balanced.'}`}</p>
     <button type="button" class="btn-plain" data-recap-ok>got it</button>
   </section>`;
 }
@@ -129,8 +129,8 @@ function finalsHTML(b) {
   <section class="finals" aria-label="Finals mode">
     <p class="finals__title">Finals mode!</p>
     <p class="finals__body">${bits.length
-      ? `You’ve got ${bits.join(' and ')}. Treat yourself, or a friend!`
-      : 'Home stretch! You’re right on budget. Fuel up for exams.'}</p>
+      ? `You've got ${bits.join(' and ')}. Treat yourself, or a friend!`
+      : 'Home stretch! You\'re right on budget. Fuel up for exams.'}</p>
   </section>`;
 }
 
@@ -150,7 +150,7 @@ function phaseHTML(b, settings, name, stats, profile) {
   if (b.phase === 'after') {
     return `
     <section class="card">
-      <p class="hand">The semester’s over! ${esc(name)} is resting.</p>
+      <p class="hand">The semester's over! ${esc(name)} is resting.</p>
       <button type="button" class="btn-sketch btn-sketch--go" data-new-semester>Start next semester</button>
     </section>
     ${settings.reportCard !== false ? reportHTML(stats, { frogName: profile.frogName }) : ''}`;
@@ -170,7 +170,7 @@ async function fillPondWeather(root, profile) {
     `feels ${w.feelsF}°`,
     w.hiF !== null && w.loF !== null ? `H ${w.hiF}° L ${w.loF}°` : '',
     w.precipProb >= 30 ? `${w.precipProb}% rain` : '',
-  ].filter(Boolean).join(' · ');
+  ].filter(Boolean).join(' • ');
   el.innerHTML = `
     <span class="weather__now">${icon} ${w.tempF}°</span>
     <span class="weather__label">${esc(label)}</span>
@@ -183,13 +183,11 @@ async function fillPondWeather(root, profile) {
 async function fillBusPeek(root, profile) {
   const el = root.querySelector('#pond-bus-peek');
   if (!el) return;
-
   const watched = profile?.busWatch;
   if (!watched || !watched.fromStopId) {
     el.hidden = true;
     return;
   }
-
   try {
     const timeout = new Promise((_, reject) =>
       setTimeout(() => reject(new Error('Bus peek timeout')), 3500)
@@ -198,27 +196,22 @@ async function fillBusPeek(root, profile) {
       fetchPredictions(watched.fromStopId),
       timeout,
     ]);
-
     if (root.querySelector('#pond-bus-peek') !== el) return; // navigated away
-
     const matching = (preds || []).filter((p) => {
       if (watched.routeId && p.routeId) {
         return String(p.routeId) === String(watched.routeId);
       }
       return true;
     });
-
     const soonest = matching.length > 0 ? matching[0] : null;
     if (!soonest) {
       el.hidden = true;
       return;
     }
-
     const routeName = watched.routeName || soonest?.routeName || 'Shuttle';
     const originStop = watched.fromStopName || 'Stop';
     const color = watched.color || soonest?.color || 'var(--green-fill)';
     const etaText = soonest.min === 0 ? 'Arriving now' : `Arriving in ${soonest.min} min`;
-
     el.innerHTML = `
       <a href="#/bus" class="bus-peek__link">
         <span class="bus-peek__icon">🚌</span>
@@ -226,11 +219,11 @@ async function fillBusPeek(root, profile) {
           <div class="bus-peek__route">
             <span class="bus-peek__badge" style="background: ${esc(color)};"></span>
             <b>${esc(routeName)}</b>
-            <span class="bus-peek__stop">· ${esc(originStop)}</span>
+            <span class="bus-peek__stop">@ ${esc(originStop)}</span>
           </div>
           <div class="bus-peek__eta">${esc(etaText)}</div>
         </div>
-        <span class="bus-peek__arrow">›</span>
+        <span class="bus-peek__arrow">→</span>
       </a>`;
     el.hidden = false;
   } catch {
@@ -246,7 +239,6 @@ const LEAVES = Array.from({ length: 10 }, (_, i) =>
 export async function renderPond(root) {
   const settings = await getSettings();
   if (!settings) { location.hash = '#/settings'; return; }
-
   const [entries, favorites, profile] = await Promise.all([getEntries(), getFavorites(), getProfile()]);
   const name = profile.frogName;
   const today = todayKey();
@@ -268,28 +260,29 @@ export async function renderPond(root) {
         streak,
         finals: b.finals,
       });
+
   const stats = b.phase === 'after' ? reportStats(settings, entries) : null;
 
-  // Friend pings can bring a visiting frog or a dance to the pond.
+  // Friend pings can bring a visiting companion or a dance to the pond.
   const pings = pingsNow();
   const visit = [...pings].reverse().find((p) => p.kind === 'visit');
-  const visitor = visit ? { mood: visit.mood ?? 'happy', name: visit.frog_name || 'Pip' } : null;
+  const visitor = visit ? { mood: visit.mood ?? 'happy', name: visit.frog_name || 'Pip', companion: visit.companion || 'frog' } : null;
   const dancing = pings.some((p) => p.kind === 'dance');
+  const activeMood = dancing && profile.companion === 'sandshrew' ? 'dancing' : mood;
 
   root.innerHTML = `
   <div class="pond-page">
     <header class="pond-page__head">
-      <p class="eyebrow">${esc(settings.semesterName)} · ${b.daysLeft} eating ${b.daysLeft === 1 ? 'day' : 'days'} left${streak >= 3 ? ` · <span class="streak">${streak}-day streak</span>` : ''}</p>
+      <p class="eyebrow">${esc(settings.semesterName)} • ${b.daysLeft} eating ${b.daysLeft === 1 ? 'day' : 'days'} left${streak >= 3 ? ` • <span class="streak">${streak}-day streak</span>` : ''}</p>
       <h1 class="page-title">${formatLong(today)}</h1>
     </header>
-
     <div class="pond-page__a">
       <div class="weather" id="pond-weather" hidden></div>
       <section aria-label="${esc(name)}" class="pond-wrap">
-        ${pondSceneHTML({ mood, name, outfit: outfitFor(today), button: true, extraClass: movingIn ? 'is-moving-in' : '', dancing, visitor, companion: profile.companion })}
+        ${pondSceneHTML({ mood: activeMood, name, outfit: outfitFor(today), button: true, extraClass: movingIn ? 'is-moving-in' : '', dancing, visitor, companion: profile.companion })}
         ${movingIn ? `<div class="leaves" aria-hidden="true">${LEAVES}</div>` : ''}
         <a href="#/bus" class="bus-bubble"><span class="bus-icon">🚌</span> Catch Bus</a>
-        <p class="pip-says" aria-live="polite">“${esc(line)}”</p>
+        <p class="pip-says" aria-live="polite"> "${esc(line)}" </p>
       </section>
       ${pingsHTML()}
       ${studyPeekHTML(today)}
@@ -299,16 +292,13 @@ export async function renderPond(root) {
       ${finalsHTML(b)}
       ${phaseHTML(b, settings, name, stats, profile)}
     </div>
-
     <div class="pond-page__b">
       <div class="notes">
         ${noteHTML('swipes', 'Swipes', b.swipes, count)}
         ${noteHTML('points', 'Points', b.points, money)}
       </div>
-
       ${stampsHTML(b.exchanges, b.weekResets)}
       ${guestHTML(b.guests)}
-
       <section aria-label="Feed ${esc(name)}" data-feed-area>
         <p class="feed__title">Feed ${esc(name)}:</p>
         <div class="feed-row">
@@ -357,15 +347,15 @@ export async function renderPond(root) {
       // 10 Pets Easter Egg
       if (pets === 10) {
         if (profile.companion === 'sandshrew') {
-          // Swap out the sprite for the jumping animation
+          // Swap out the sprite for the jumping animation GIF
           frog.innerHTML = frogSVG('jumping', profile.frogName, { outfit: outfitFor(today), companion: 'sandshrew' });
           
-          // Revert back to the normal mood sprite after 2.5 seconds
+          // Revert back to the normal mood sprite after 3 seconds
           setTimeout(() => {
             if (document.body.contains(frog)) {
               frog.innerHTML = frogSVG(mood, profile.frogName, { outfit: outfitFor(today), companion: profile.companion });
             }
-          }, 2500);
+          }, 3000);
         } else {
           // Classic Pip chorus
           play('chorus'); 

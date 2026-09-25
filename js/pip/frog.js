@@ -79,42 +79,31 @@ function eyes(mood) {
 }
 
 export function frogSVG(mood = 'happy', name = 'Pip', { outfit = null, companion = 'frog' } = {}) {
-  // Sandshrew Companion Override (Animated Sprite Sheet)
+  // Sandshrew Companion Override (Static Moods + GIF Animations)
   if (companion === 'sandshrew') {
-    let yOffset = 0;
-    let startX = 0;
-    let animationTag = '';
+    let url = 'assets/sandshrew/happy.png'; // Default / Happy
 
     if (mood === 'eating') {
-      yOffset = -42;
-      startX = 0;
+      url = 'assets/sandshrew/eating.gif';
     } else if (mood === 'sleeping') {
-      yOffset = -75;
-      startX = -180;
+      url = 'assets/sandshrew/sleeping.png'; // Curled ball
     } else if (mood === 'sad' || mood === 'worried') {
-      yOffset = -106;
-      animationTag = `<animate attributeName="x" values="0;-45;0" dur="1.5s" calcMode="discrete" repeatCount="indefinite" />`;
+      url = 'assets/sandshrew/sad.png';
     } else if (mood === 'shocked') {
-      yOffset = -106;
-      animationTag = `<animate attributeName="x" values="-90;-135;-90" dur="0.4s" calcMode="discrete" repeatCount="indefinite" />`;
+      url = 'assets/sandshrew/shocked.png';
     } else if (mood === 'jumping') {
-      yOffset = -75;
-      startX = 0;
-      animationTag = `<animate attributeName="x" values="0;-45;-90;-135;0" dur="0.6s" calcMode="discrete" repeatCount="indefinite" />`;
-    } else {
-      yOffset = 0;
-      animationTag = `<animate attributeName="x" values="0;-45;-90;-45" dur="0.8s" calcMode="discrete" repeatCount="indefinite" />`;
+      url = 'assets/sandshrew/jump.gif'; // 10 pets easter egg GIF
+    } else if (mood === 'dancing') {
+      url = 'assets/sandshrew/dance.gif'; // Friend dance ping GIF
     }
 
     return `
-    <svg viewBox="0 0 45 40" width="160" height="160" role="img" aria-label="${esc(name)} is ${DESCRIBE[mood] ?? 'happy'}">
-      <image href="assets/sprite-no-bg-326x146.png" x="${startX}" y="${yOffset}" width="326" height="146" style="image-rendering: pixelated; image-rendering: crisp-edges;">
-        ${animationTag}
-      </image>
-    </svg>`;
+    <div style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;">
+      <img src="${url}" alt="${esc(name)} is ${DESCRIBE[mood] ?? 'happy'}" style="image-rendering: pixelated; image-rendering: crisp-edges; max-width: 100%; max-height: 100%; object-fit: contain;">
+    </div>`;
   }
 
-  // Classic Pip the Frog
+  // Classic Pip the Frog (Leave untouched)
   const skin = SKIN[mood] ?? SKIN.happy;
   return `
 <svg viewBox="0 0 160 160" width="160" height="160" role="img" aria-label="${esc(name)} looks ${DESCRIBE[mood] ?? 'happy'}">

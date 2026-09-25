@@ -3,7 +3,7 @@ import { budget } from '../core/calc.js';
 import { todayKey, formatLong, formatShort, addDays, isDayOff } from '../core/dates.js';
 import { reportStats, nextSemesterDefaults } from '../core/semester.js';
 import { moodFor, reactionMood } from '../pip/mood.js';
-import { pipLine, pick, PET } from '../pip/lines.js';
+import { pipLine, pick, PET, SANDSHREW_PET } from '../pip/lines.js';
 import { outfitFor, frogSVG } from '../pip/frog.js';
 import { esc, money, count, plural } from '../ui/dom.js';
 import { noteHTML, stampsHTML, pondSceneHTML } from '../ui/widgets.js';
@@ -335,7 +335,7 @@ export async function renderPond(root) {
       frog.classList.add('is-petted');
       frog.insertAdjacentHTML('beforeend', '<svg class="heart" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-7-4.5-9.5-9A5.5 5.5 0 0 1 12 6a5.5 5.5 0 0 1 9.5 6C19 16.5 12 21 12 21z"/></svg>');
       setTimeout(() => frog.querySelector('.heart')?.remove(), 900);
-      says.textContent = `"${pick(PET, pets + Date.now() % 7, profile.nickname)}"`;
+      says.textContent = `"${pick(profile.companion === 'sandshrew' ? SANDSHREW_PET : PET, pets + Date.now() % 7, profile.nickname)}"`;
       
       // Custom Audio Routing
       if (pets === 1) {

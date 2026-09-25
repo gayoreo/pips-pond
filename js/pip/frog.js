@@ -82,6 +82,7 @@ export function frogSVG(mood = 'happy', name = 'Pip', { outfit = null, companion
   // Sandshrew Companion Override (Lilypad Base + Static Moods + GIFs)
   if (companion === 'sandshrew') {
     let url = 'assets/sandshrew/happy.png'; // Default / Happy
+    let customStyle = '';
 
     if (mood === 'eating') {
       url = 'assets/sandshrew/eating.png';
@@ -93,24 +94,29 @@ export function frogSVG(mood = 'happy', name = 'Pip', { outfit = null, companion
       url = 'assets/sandshrew/shocked.png';
     } else if (mood === 'jumping') {
       url = 'assets/sandshrew/jump.gif'; // 10 pets easter egg GIF
+      customStyle = 'mix-blend-mode: multiply; background: transparent;';
     } else if (mood === 'dancing') {
       url = 'assets/sandshrew/dance.gif'; // Friend dance ping GIF
+      customStyle = 'mix-blend-mode: multiply; background: transparent;';
+    } else {
+      customStyle = 'width: 135px; height: 135px;';
     }
 
     return `
     <svg viewBox="0 0 160 160" width="160" height="160" role="img" aria-label="${esc(name)} is ${DESCRIBE[mood] ?? 'happy'}">
-      <g filter="url(#wobble)" stroke="#2F5D2B" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-        <!-- Lilypad Base -->
+      <!-- 1. Render Sandshrew FIRST so she sits inside/on the pad properly -->
+      <foreignObject x="10" y="10" width="140" height="140">
+        <div xmlns="http://www.w3.org/1999/xhtml" style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;">
+          <img src="${url}" alt="" style="width: 120px; height: 120px; image-rendering: pixelated; image-rendering: crisp-edges; object-fit: contain; ${customStyle}" />
+        </div>
+      </foreignObject>
+      <!-- 2. Lilypad Base rendered ON TOP of the image base if needed, or structured cleanly -->
+      <g filter="url(#wobble)" stroke="#2F5D2B" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="pointer-events: none;">
         <path d="M14 134 C14 118 46 112 80 112 C114 112 146 118 146 134 C146 148 114 154 80 154 C46 154 14 148 14 134 Z" fill="#86C29B"/>
         <path d="M80 136 L120 126 M80 136 L42 127" fill="none" stroke="#5E9A73" stroke-width="2"/>
         <ellipse cx="38" cy="128" rx="14" ry="7" fill="#7CC96B"/>
         <ellipse cx="122" cy="128" rx="14" ry="7" fill="#7CC96B"/>
       </g>
-      <foreignObject x="10" y="10" width="140" height="140">
-        <div xmlns="http://www.w3.org/1999/xhtml" style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;">
-          <img src="${url}" alt="" style="width: 120px; height: 120px; image-rendering: pixelated; image-rendering: crisp-edges; object-fit: contain;" />
-        </div>
-      </foreignObject>
     </svg>`;
   }
 

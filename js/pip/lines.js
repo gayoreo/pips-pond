@@ -61,6 +61,16 @@ export const PET = [
   'You found my favorite spot!', 'Boing!', '*blinks slowly*', 'Hi, {nick}!',
 ];
 
+export const SANDSHREW_PET = [
+  "Sand-shh!",
+  "Scrunch!",
+  "Digging the vibe.",
+  "*happy digging noises*",
+  "Clack clack!",
+  "So cozy in the sun.",
+  "Armor is fully polished.",
+];
+
 export function timeOfDay(hour) {
   if (hour >= 5 && hour < 11) return 'morning';
   if (hour >= 11 && hour < 14) return 'lunch';

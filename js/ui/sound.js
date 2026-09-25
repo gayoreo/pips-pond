@@ -45,6 +45,7 @@ const CLIPS = {
   ribbit: './assets/sounds/ribbit.mp3',
   splash: './assets/sounds/splash.mp3',
   chorus: './assets/sounds/chorus.mp3',
+  sandshrew: './assets/sounds/sandshrew.mp3',
 };
 const clipCache = {};
 

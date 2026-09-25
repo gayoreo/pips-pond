@@ -35,11 +35,10 @@ const distSq = (lat1, lon1, lat2, lon2) => {
 };
 
 async function getPeakTransitUnifiedData() {
-  const [routesRes, routeStopsRes, stopsRes, shapesRes, etaRes, vehRes] = await Promise.all([
+  const [routesRes, routeStopsRes, stopsRes, etaRes, vehRes] = await Promise.all([
     fetch(`${BPT_API_BASE}&controller=route2&action=list`, { headers: SPOOFED_HEADERS }),
     fetch(`${BPT_API_BASE}&controller=routestop2&action=list`, { headers: SPOOFED_HEADERS }),
     fetch(`${BPT_API_BASE}&controller=stop2&action=list`, { headers: SPOOFED_HEADERS }),
-    fetch(`${BPT_API_BASE}&controller=shape2&action=list`, { headers: SPOOFED_HEADERS }),
     fetch(`${BPT_API_BASE}&controller=eta&action=list`, { headers: SPOOFED_HEADERS }),
     fetch(`${BPT_API_BASE}&controller=vehicle&action=list`, { headers: SPOOFED_HEADERS }),
   ]);
@@ -51,7 +50,6 @@ async function getPeakTransitUnifiedData() {
   const routesJson = await routesRes.json();
   const routeStopsJson = routeStopsRes.ok ? await routeStopsRes.json() : { routeStops: [] };
   const stopsJson = await stopsRes.json();
-  const shapesJson = shapesRes.ok ? await shapesRes.json() : { shape: [] };
   const etaJson = etaRes.ok ? await etaRes.json() : { stop: [] };
   const vehJson = vehRes.ok ? await vehRes.json() : { vehicle: [] };
 
@@ -74,15 +72,7 @@ async function getPeakTransitUnifiedData() {
     });
   }
 
-  // 2. Active shapes by routeID
-  const shapesByRoute = new Map();
-  for (const sh of (shapesJson.shape || [])) {
-    if (!sh.disabled && sh.points) {
-      shapesByRoute.set(String(sh.routeID), sh);
-    }
-  }
-
-  // 3. Route stops by routeID
+  // 2. Route stops by routeID
   const routeStopsByRoute = new Map();
   for (const rs of (routeStopsJson.routeStops || [])) {
     if (!rs.disabled) {
@@ -92,40 +82,40 @@ async function getPeakTransitUnifiedData() {
     }
   }
 
-  // 4. Order stops along shape path for continuous loops
+  // 3. Reliable Stop Sequencing: sort route stops strictly by official routeStopID or numerical sequence order
   const routeStopsMap = new Map();
   for (const [rId, rsList] of routeStopsByRoute.entries()) {
-    const shape = shapesByRoute.get(rId);
-    if (shape && shape.points && rsList.length > 0) {
-      const points = shape.points.split(';').filter(Boolean).map((pt) => {
-        const [lat, lng] = pt.split(',').map(Number);
-        return { lat, lng };
-      });
+    rsList.sort((a, b) => {
+      const seqA = a.sequence != null && !isNaN(Number(a.sequence))
+        ? Number(a.sequence)
+        : (a.order != null && !isNaN(Number(a.order))
+          ? Number(a.order)
+          : (a.stopOrder != null && !isNaN(Number(a.stopOrder))
+            ? Number(a.stopOrder)
+            : Number(a.routeStopID ?? 0)));
+      const seqB = b.sequence != null && !isNaN(Number(b.sequence))
+        ? Number(b.sequence)
+        : (b.order != null && !isNaN(Number(b.order))
+          ? Number(b.order)
+          : (b.stopOrder != null && !isNaN(Number(b.stopOrder))
+            ? Number(b.stopOrder)
+            : Number(b.routeStopID ?? 0)));
+      return seqA - seqB;
+    });
 
-      const pos = rsList.map((rs) => {
-        const s = stopMap.get(String(rs.stopID));
-        if (!s) return { stopId: String(rs.stopID), idx: 999999 };
-        let minD = Infinity;
-        let bestIdx = 0;
-        for (let i = 0; i < points.length; i++) {
-          const d = (s.lat - points[i].lat) ** 2 + (s.lng - points[i].lng) ** 2;
-          if (d < minD) {
-            minD = d;
-            bestIdx = i;
-          }
-        }
-        return { stopId: String(rs.stopID), idx: bestIdx };
-      });
-
-      pos.sort((a, b) => a.idx - b.idx);
-      routeStopsMap.set(rId, pos.map((p) => p.stopId));
-    } else {
-      rsList.sort((a, b) => Number(a.routeStopID ?? 0) - Number(b.routeStopID ?? 0));
-      routeStopsMap.set(rId, rsList.map((rs) => String(rs.stopID)));
+    const seenStops = new Set();
+    const orderedStops = [];
+    for (const rs of rsList) {
+      const sId = String(rs.stopID);
+      if (!seenStops.has(sId)) {
+        seenStops.add(sId);
+        orderedStops.push(sId);
+      }
     }
+    routeStopsMap.set(rId, orderedStops);
   }
 
-  // 5. Physical active vehicles in service
+  // 4. Physical active vehicles in service
   const rawVehicles = Array.isArray(vehJson.vehicle) ? vehJson.vehicle : [];
   const activeVehicles = rawVehicles.filter((v) => v.oos === 0 && Number(v.routeID) > 0);
   const activeRouteIds = new Set(activeVehicles.map((v) => String(v.routeID)));
@@ -137,7 +127,7 @@ async function getPeakTransitUnifiedData() {
     vehiclesByRoute.get(rId).push(v);
   });
 
-  // 6. Valid routes (filter out empty phantom routes like Hockey with 0 stops)
+  // 5. Valid routes (filter out empty phantom routes like Hockey with 0 stops)
   const validRoutes = (routesJson.routes || [])
     .filter((r) => {
       const rId = String(r.routeID);
@@ -157,7 +147,7 @@ async function getPeakTransitUnifiedData() {
 
   const validRouteIds = new Set(validRoutes.map((r) => r.id));
 
-  // 7. Valid stops on valid routes
+  // 6. Valid stops on valid routes
   const activeStopIds = new Set();
   const stopRoutesMap = new Map();
   for (const r of validRoutes) {
@@ -185,10 +175,54 @@ async function getPeakTransitUnifiedData() {
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  // 8. Generate accurate real-time loop predictions for ALL active vehicles
+  // 7. Rely on Native ETAs: Prioritize official Peak Transit eta controller data (etaJson.stop)
   const predictions = [];
   const processedKeys = new Set();
+  const officialEtaStops = new Set();
 
+  const stopsEta = Array.isArray(etaJson.stop) ? etaJson.stop : [];
+  for (const item of stopsEta) {
+    const rId = String(item.routeID);
+    const sId = String(item.stopID);
+    if (!validRouteIds.has(rId)) continue;
+
+    const etaKeys = Object.keys(item).filter((k) => /^eta\d*$/i.test(k));
+    for (const etaProp of etaKeys) {
+      let ts = Number(item[etaProp]);
+      if (ts > 1e11) ts = Math.floor(ts / 1000);
+
+      if (ts && !isNaN(ts) && ts >= nowSec - 30) {
+        const min = Math.max(0, Math.round((ts - nowSec) / 60));
+        let vehicle = String(item.vehicleID ?? item.busID ?? '');
+        if (!vehicle && vehiclesByRoute.has(rId)) {
+          const vList = vehiclesByRoute.get(rId);
+          if (etaProp.toUpperCase() === 'ETA1' && vList.length > 0) {
+            vehicle = String(vList[0].vehicleName || vList[0].vehicleID || '');
+          } else if (etaProp.toUpperCase() === 'ETA2' && vList.length > 1) {
+            vehicle = String(vList[1].vehicleName || vList[1].vehicleID || '');
+          } else if (vList.length === 1) {
+            vehicle = String(vList[0].vehicleName || vList[0].vehicleID || '');
+          }
+        }
+
+        const key = `${rId}:${sId}:${vehicle || min}:${ts}`;
+        if (!processedKeys.has(key)) {
+          predictions.push({
+            routeId: rId,
+            stopId: sId,
+            min,
+            eta: min === 0 ? 'Arriving now' : new Date(ts * 1000).toLocaleTimeString([], { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }),
+            vehicle: vehicle,
+            timestamp: ts,
+          });
+          processedKeys.add(key);
+          officialEtaStops.add(`${rId}:${sId}`);
+        }
+      }
+    }
+  }
+
+  // 8. Secondary fallback: ONLY use vehicle GPS coordinate matching if official ETA is missing
   for (const [rId, vList] of vehiclesByRoute.entries()) {
     const loopStops = routeStopsMap.get(rId) || [];
     if (loopStops.length < 2) continue;
@@ -226,6 +260,12 @@ async function getPeakTransitUnifiedData() {
       for (let offset = 0; offset < loopStops.length; offset++) {
         const targetIdx = (vStopIdx + offset) % loopStops.length;
         const targetStopId = loopStops[targetIdx];
+
+        // Skip if this stop already has an official ETA
+        if (officialEtaStops.has(`${rId}:${targetStopId}`)) {
+          continue;
+        }
+
         const key = `${rId}:${targetStopId}:${vId}`;
         if (processedKeys.has(key)) continue;
 
@@ -246,36 +286,6 @@ async function getPeakTransitUnifiedData() {
           timestamp: arrTs,
         });
         processedKeys.add(key);
-      }
-    }
-  }
-
-  // 9. Merge Peak Transit timetable ETAs if present and not already covered
-  const stopsEta = Array.isArray(etaJson.stop) ? etaJson.stop : [];
-  for (const item of stopsEta) {
-    const rId = String(item.routeID);
-    const sId = String(item.stopID);
-    if (!validRouteIds.has(rId)) continue;
-
-    for (const etaProp of ['ETA1', 'ETA2']) {
-      const ts = item[etaProp];
-      if (ts && ts > nowSec) {
-        const min = Math.max(0, Math.round((ts - nowSec) / 60));
-        const vehicle = String(item.vehicleID ?? item.busID ?? '');
-        const key = `${rId}:${sId}:${vehicle || min}`;
-        // If an active GPS prediction already exists around this time (+- 2 mins), don't duplicate
-        const existsNearby = predictions.some((p) => p.routeId === rId && p.stopId === sId && Math.abs(p.min - min) <= 2);
-        if (!existsNearby && !processedKeys.has(key)) {
-          predictions.push({
-            routeId: rId,
-            stopId: sId,
-            min,
-            eta: min === 0 ? 'Arriving now' : new Date(ts * 1000).toLocaleTimeString([], { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }),
-            vehicle: vehicle,
-            timestamp: ts,
-          });
-          processedKeys.add(key);
-        }
       }
     }
   }

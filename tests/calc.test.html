@@ -19,6 +19,7 @@
     import { learnWeights } from '../js/core/weights.js';
     import { rolloverFor, nextSemesterDefaults, reportStats } from '../js/core/semester.js';
     import { parseCSV, parseDateLoose, parseAmount, mapSchoolRows } from '../js/data/importExport.js';
+    import { courseGrade, scoreNeeded } from '../js/core/grades.js';
 
     const out = document.getElementById('out');
     let passed = 0, failed = 0;
@@ -144,6 +145,34 @@
     const mapped = mapSchoolRows([['9/2/2026', '-$4.00', 'Starbucks'], ['9/2/2026', '$50.00', 'Deposit'], ['bad', '1', '']],
       { dateCol: 0, amountCol: 1, descCol: 2, mode: 'points', skipDeposits: true, existing: [] });
     check('import maps rows and skips deposits', mapped.entries.length, 1);
+
+    // ---- Live points-based grades ----
+    // A planned 100-point category with only 60 points graded so far should scale over 60, not 100.
+    const pointsCourse = {
+      grading: {
+        groups: [
+          { id: 'lecture', name: 'Lecture', weight: 0, mode: 'weighted', categories: [] },
+          { id: 'lab', name: 'Lab', weight: 100, mode: 'points',
+            categories: [{ id: 'lab-assignments', name: 'Lab Assignments', total: 100 }] },
+        ],
+      },
+      grades: [
+        { id: 'lab-1', catId: 'lab-assignments', earned: 30, possible: 30, status: 'graded' },
+        { id: 'lab-2', catId: 'lab-assignments', earned: 30, possible: 30, status: 'graded' },
+        { id: 'lab-3', catId: 'lab-assignments', earned: '', possible: 40, status: 'pending' },
+      ],
+    };
+    const livePoints = courseGrade(pointsCourse);
+    check('points grade scales over graded work (60/60, not 60/100)', livePoints.pct, 100);
+    check('points subcategory display also scales over graded work', livePoints.groups[1].cats[0].pct, 100);
+
+    const partialPoints = {
+      ...pointsCourse,
+      grades: pointsCourse.grades.map((x) => x.id === 'lab-2' ? { ...x, earned: 15 } : x),
+    };
+    check('partial points grade uses current denominator (45/60)', courseGrade(partialPoints).pct, 75);
+    check('pending points stay out of the live grade', courseGrade(pointsCourse).pct, 100);
+    check('what-do-I-need can still include a selected pending assignment', scoreNeeded(pointsCourse, 'lab-3', 90).need, 75);
 
     document.getElementById('summary').textContent = `${passed} passed, ${failed} failed`;
   </script>

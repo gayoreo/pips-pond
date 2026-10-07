@@ -72,7 +72,7 @@ const isGraded = (it) => it.status !== 'excused' && it.status !== 'pending' && n
 const pctOf = (e, p) => (p > 0 ? e / p : 0);
 
 // One subcategory from its items: { earned, possible, pct (0-1) or null, dropped: [ids] }.
-// earned/possible are summed from the items; the typed point total (for points groups) is applied later.
+// earned/possible are summed from graded items only. Pending work is intentionally excluded from the live grade.
 function categoryResult(cat, items, replacement) {
   let list = items.filter(isGraded).map((it) => ({ id: it.id, earned: num(it.earned) + (num(it.extra) ?? 0), possible: num(it.possible), isFinal: Boolean(it.isFinal) }));
 

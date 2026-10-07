@@ -377,7 +377,7 @@ function openGradingSheet(course) {
   const groupNote = (gr) => {
     if (gr.mode === 'points') {
       const total = gr.categories.filter((c) => !c.bonus).reduce((s, c) => s + (Number(c.total) || 0), 0);
-      return total ? `${gr.name} totals ${total} points.` : `Give each category a point total.`;
+      return total ? `${gr.name} is planned for ${total} points. Current grade uses only graded points.` : `Give each category its planned semester point total.`;
     }
     const sum = gr.categories.filter((c) => !c.bonus).reduce((s, c) => s + (Number(c.weight) || 0), 0);
     return sum === 100 ? `Categories add up to 100% of ${gr.name}.` : `Categories add up to ${sum}% of ${gr.name}. They usually total 100%.`;

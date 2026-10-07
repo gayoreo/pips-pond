@@ -1,7 +1,7 @@
 // Grade math. Every course has two built-in groups, Lecture and Lab, each worth a share of the
 // overall grade. Inside a group are subcategories (the old "categories"): each group is weighted
-// or points on its own. A weighted subcategory is a % of its group; a points subcategory has a
-// typed point total that scores count toward and can go over (extra credit). Also: drop lowest,
+// or points on its own. A weighted subcategory is a % of its group; a points subcategory can keep a
+// planned end-of-term point total, while the live grade scales only over points graded so far. Also: drop lowest,
 // final replaces lowest exam, excused / not-graded-yet items, per-item and course extra credit,
 // letter cutoffs per course, and GPA from a school-wide scale.
 
@@ -72,7 +72,7 @@ const isGraded = (it) => it.status !== 'excused' && it.status !== 'pending' && n
 const pctOf = (e, p) => (p > 0 ? e / p : 0);
 
 // One subcategory from its items: { earned, possible, pct (0-1) or null, dropped: [ids] }.
-// earned/possible are summed from the items; the typed point total (for points groups) is applied later.
+// earned/possible are summed from graded items only. Pending work is intentionally excluded from the live grade.
 function categoryResult(cat, items, replacement) {
   let list = items.filter(isGraded).map((it) => ({ id: it.id, earned: num(it.earned) + (num(it.extra) ?? 0), possible: num(it.possible), isFinal: Boolean(it.isFinal) }));
 
@@ -112,11 +112,10 @@ export function courseGrade(course, override = {}) {
   const cats = {};
   for (const gr of g.groups) for (const c of gr.categories) cats[c.id] = categoryResult(c, byCat(c.id), replacement);
 
-  // A subcategory's own percent, for display. Points subcats divide by their typed total, so
-  // extra credit can push them past 100%.
+  // A subcategory's own live percent, for display. In points mode the configured total is the
+  // planned end-of-term total, not a bucket of future zeros: only graded possible points count.
   const catPctOf = (gr, c) => {
     const r = cats[c.id];
-    if (gr.mode === 'points') { const t = num(c.total); return t ? (r.earned / t) * 100 : (r.possible > 0 ? r.pct * 100 : null); }
     return r.pct === null ? null : r.pct * 100;
   };
 
@@ -125,11 +124,12 @@ export function courseGrade(course, override = {}) {
     const regular = gr.categories.filter((c) => !c.bonus);
     const bonus = gr.categories.filter((c) => c.bonus);
     if (gr.mode === 'points') {
-      const P = regular.reduce((s, c) => s + (num(c.total) ?? 0), 0);
-      const E = regular.reduce((s, c) => s + cats[c.id].earned, 0);
-      const B = bonus.reduce((s, c) => s + cats[c.id].earned, 0);
-      const anyGraded = [...regular, ...bonus].some((c) => cats[c.id].possible > 0);
-      return P > 0 && anyGraded ? ((E + B) / P) * 100 : null;
+      // Only points that have actually been graded belong in the live denominator.
+      // Configured category totals are the planned semester totals, not future zeroes.
+      const P = regular.reduce((sum, c) => sum + cats[c.id].possible, 0);
+      const E = regular.reduce((sum, c) => sum + cats[c.id].earned, 0);
+      const B = bonus.reduce((sum, c) => sum + cats[c.id].earned, 0);
+      return P > 0 ? ((E + B) / P) * 100 : null;
     }
     const counted = regular.filter((c) => cats[c.id].pct !== null && (num(c.weight) ?? 0) > 0);
     const W = counted.reduce((s, c) => s + num(c.weight), 0);

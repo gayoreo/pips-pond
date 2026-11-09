@@ -59,16 +59,6 @@ function weightedDays(from, to, daysOff, w) {
   return n;
 }
 
-// Same as weightedDays, but counts every calendar day — days off included.
-// Used to size a week's plan share so a week with a day or two off still gets
-// its full allotted slice of the semester (the days off just don't spend it;
-// the rest of that week's eating days effectively absorb their share).
-function planWeightedDays(from, to, w) {
-  let n = 0;
-  for (let k = from; k <= to; k = addDays(k, 1)) n += w[dayOfWeek(k)];
-  return n;
-}
-
 // How many points-adjusted "base" changes (fund/adjust) happened during one week —
 // these change the semester total and should count toward that week's plan, same as
 // spending counts against it, so a mid-week top-up or correction lands where it happened.
@@ -97,8 +87,8 @@ function weeklyRollover(settings, entries, planPerUnit, w, uptoWeekStart) {
     const to = minKey(addDays(weekStart, 6), end);
     if (from > to) { weekStart = addDays(weekStart, 7); continue; }
 
-    // Days off inside the week don't shrink its plan — the week keeps its full slice.
-    const wDays = planWeightedDays(from, to, w);
+    // Allocate only to eligible eating days; a full naptime week gets no new points.
+    const wDays = weightedDays(from, to, settings.daysOff ?? [], w);
     const plan = planPerUnit * wDays;
     thisWeekPlan = plan;
 
@@ -164,8 +154,8 @@ export function budget(settings, entries, today, { weights } = {}) {
   //      the week's remaining days using the auto-learned weekday weights ----
   const points = (() => {
     const balance = totals.points - spentAll.points - base.points;
-    // Days off don't shrink the semester's total plan pie either — same basis as each week's plan.
-    const semesterWeighted = end >= start ? planWeightedDays(start, end, w) : 0;
+    // Spread the semester's points across eligible eating days only.
+    const semesterWeighted = end >= start ? weightedDays(start, end, daysOff, w) : 0;
     const planPerUnit = semesterWeighted > 0 ? totals.points / semesterWeighted : 0;
 
     const { carry, plan: thisWeekPlan } = weeklyRollover(settings, entries, planPerUnit, w, weekStart);

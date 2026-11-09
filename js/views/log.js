@@ -1,7 +1,7 @@
 import { getSettings, getEntries, saveSettings, deleteEntry } from '../data/db.js';
 import { budget, isBaseChange } from '../core/calc.js';
 import {
-  todayKey, toKey, formatLong, formatTime, formatHM, monthKey, addMonths, daysInMonth, formatMonth, dayOfWeek,
+  todayKey, toKey, formatLong, formatTime, formatHM, monthKey, addMonths, daysInMonth, formatMonth, dayOfWeek, isDayOff,
 } from '../core/dates.js';
 import { moodFor, MOOD_LABEL } from '../pip/mood.js';
 import { esc, money, plural } from '../ui/dom.js';
@@ -12,7 +12,10 @@ const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const view = { selected: null, month: null, journalCount: 10 }; // remembered while the app is open
 
 function dayMood(settings, all, key) {
-  if (key < settings.start || key > settings.end || key > todayKey()) return null;
+  if (key < settings.start || key > settings.end) return null;
+  // Future days off should be visible without predicting moods for ordinary future days.
+  if (isDayOff(key, settings.daysOff ?? [])) return 'sleeping';
+  if (key > todayKey()) return null;
   return moodFor(budget(settings, all, key));
 }
 

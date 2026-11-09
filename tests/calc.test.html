@@ -96,16 +96,31 @@
     const eOver = [{ type: 'points', amount: 60, date: '2026-09-01' }]; // week 1 pool is $50, overspent by $10
     check('overspent week carries the deficit into next week (50-10)', budget(s, eOver, '2026-09-07').points.weekly, 40);
 
-    // A week with days off keeps its full plan share (days off don't shrink it) —
-    // the rest of that week's eating days absorb what the days off would've used.
+    // A week with days off receives only the share for eligible eating days.
     const daysOffWeek = {
       start: '2026-08-31', end: '2026-09-13', weekStart: 1, swipesTotal: 0, pointsTotal: 140, exchangeLimit: 0,
       daysOff: [{ from: '2026-09-02', to: '2026-09-03', label: 'Break' }], weightMode: 'equal',
     };
-    check('a week with 2 days off still plans its full share (70, not 50)',
-      budget(daysOffWeek, [], '2026-08-31').points.weekly, 70);
-    check('unspent days-off week rolls its whole plan forward (70+70)',
+    check('a week with 2 days off allocates 5 of 12 eating days',
+      budget(daysOffWeek, [], '2026-08-31').points.weekly, 140 * 5 / 12);
+    check('unspent days-off week rolls its eligible-day plan forward',
       budget(daysOffWeek, [], '2026-09-07').points.weekly, 140);
+
+    const fullNapWeek = {
+      start: '2026-11-02', end: '2026-11-22', weekStart: 1,
+      swipesTotal: 21, pointsTotal: 140, exchangeLimit: 0, weightMode: 'equal',
+      daysOff: [{ from: '2026-11-09', to: '2026-11-15', label: 'Away' }],
+    };
+    check('upcoming full naptime week excluded from first-week points allocation',
+      budget(fullNapWeek, [], '2026-11-02').points.weekly, 70);
+    check('full naptime week gets no new points allocation',
+      budget(fullNapWeek, [], '2026-11-09').points.weekly, 70);
+    check('full naptime week has no daily allowance',
+      budget(fullNapWeek, [], '2026-11-10').points.daily, 0);
+    check('full naptime week gets no swipe allocation',
+      budget(fullNapWeek, [], '2026-11-09').swipes.weekly, 0);
+    check('final eating week receives remaining points with rollover',
+      budget(fullNapWeek, [], '2026-11-16').points.weekly, 140);
 
     // ---- Pass 4: funds, guests, weights, rollover, import ----
     check('added $50 points raises the balance', balances(s, [{ type: 'fund-points', amount: 50, date: '2026-09-02' }]).points, 150);

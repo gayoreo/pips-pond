@@ -198,7 +198,8 @@ export const saveGrading = (courseId, grading) => change((s) => {
   }
   const { categories: _flat, mode: _mode, ...rest } = grading;
   const examCat = remap.get(grading.examCat) ?? grading.examCat;
-  c.grading = { ...(c.grading ?? {}), ...rest, groups, examCat };
+  const compositeCat = remap.get(grading.compositeCat) ?? grading.compositeCat;
+  c.grading = { ...(c.grading ?? {}), ...rest, groups, examCat, compositeCat };
   const ids = new Set(groups.flatMap((g) => g.categories.map((x) => x.id)));
   const first = groups.flatMap((g) => g.categories)[0]?.id ?? '';
   for (const it of c.grades ?? []) {
@@ -206,6 +207,7 @@ export const saveGrading = (courseId, grading) => change((s) => {
     if (!ids.has(it.catId)) it.catId = first;
   }
   if (c.grading.examCat && !ids.has(c.grading.examCat)) c.grading.examCat = '';
+  if (c.grading.compositeCat && !ids.has(c.grading.compositeCat)) c.grading.compositeCat = '';
 });
 
 export const saveGradeItem = (courseId, item) => change((s) => {

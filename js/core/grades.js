@@ -21,7 +21,7 @@ export const DEFAULT_GPA_SCALE = {
 // The two built-in groups, in order. Lecture carries the whole grade until you split off a Lab.
 export const GROUP_DEFS = [{ id: 'lecture', name: 'Lecture' }, { id: 'lab', name: 'Lab' }];
 
-export const DEFAULT_GRADING = { scale: SCALE_PM, credits: 3, passFail: false, passMin: 70, replaceLowest: false, examCat: '' };
+export const DEFAULT_GRADING = { scale: SCALE_PM, credits: 3, passFail: false, passMin: 70, replaceLowest: false, examCat: '', compositeCat: '', examMultiplier: 1 };
 
 const num = (v) => (v === '' || v === null || v === undefined || Number.isNaN(Number(v)) ? null : Number(v));
 
@@ -110,7 +110,40 @@ export function courseGrade(course, override = {}) {
   }
 
   const cats = {};
-  for (const gr of g.groups) for (const c of gr.categories) cats[c.id] = categoryResult(c, byCat(c.id), replacement);
+  for (const gr of g.groups) for (const c of gr.categories) cats[c.id] = categoryResult(c, byCat(c.id), g.compositeCat && c.id === g.examCat ? null : replacement);
+
+  const lecture = g.groups.find((x) => x.id === 'lecture');
+  const composite = lecture?.mode === 'points' && g.examCat && g.compositeCat
+    && g.examCat !== g.compositeCat
+    && lecture.categories.some((c) => c.id === g.examCat)
+    && lecture.categories.some((c) => c.id === g.compositeCat);
+  if (composite) {
+    const exam = lecture.categories.find((c) => c.id === g.examCat);
+    const quiz = cats[g.compositeCat];
+    const candidates = byCat(g.examCat).filter(isGraded).map((it) => ({
+      id: it.id, earned: num(it.earned) + (num(it.extra) ?? 0),
+      possible: num(it.possible), isFinal: Boolean(it.isFinal),
+    }));
+    if (quiz.possible > 0) candidates.push({
+      id: 'composite:' + g.compositeCat, earned: quiz.pct * 100,
+      possible: 100, isFinal: false,
+    });
+    if (replacement) {
+      const eligible = candidates.filter((x) => !x.isFinal);
+      if (eligible.length) {
+        const low = eligible.reduce((a,b) => pctOf(a.earned,a.possible) <= pctOf(b.earned,b.possible) ? a : b);
+        if (replacement.pct > pctOf(low.earned,low.possible)) low.earned = replacement.pct * low.possible;
+      }
+    }
+    const n = Math.max(0, Math.floor(num(exam.drop) ?? 0));
+    const eligible = candidates.filter((x) => !x.isFinal)
+      .sort((a,b) => pctOf(a.earned,a.possible) - pctOf(b.earned,b.possible));
+    const dropped = candidates.length > n ? eligible.slice(0,n).map((x) => x.id) : [];
+    const kept = candidates.filter((x) => !dropped.includes(x.id));
+    const earned = kept.reduce((sum,x) => sum+x.earned,0);
+    const possible = kept.reduce((sum,x) => sum+x.possible,0);
+    cats[g.examCat] = { earned, possible, pct: possible ? earned/possible : null, dropped };
+  }
 
   // A subcategory's own live percent, for display. In points mode the configured total is the
   // planned end-of-term total, not a bucket of future zeros: only graded possible points count.
@@ -126,8 +159,11 @@ export function courseGrade(course, override = {}) {
     if (gr.mode === 'points') {
       // Only points that have actually been graded belong in the live denominator.
       // Configured category totals are the planned semester totals, not future zeroes.
-      const P = regular.reduce((sum, c) => sum + cats[c.id].possible, 0);
-      const E = regular.reduce((sum, c) => sum + cats[c.id].earned, 0);
+      const counted = regular.filter((c) => !(composite && c.id === g.compositeCat));
+      const scale = Number(g.examMultiplier);
+      const factor = (c) => composite && c.id === g.examCat && Number.isFinite(scale) && scale > 0 ? scale : 1;
+      const P = counted.reduce((sum,c) => sum + cats[c.id].possible * factor(c),0);
+      const E = counted.reduce((sum,c) => sum + cats[c.id].earned * factor(c),0);
       const B = bonus.reduce((sum, c) => sum + cats[c.id].earned, 0);
       return P > 0 ? ((E + B) / P) * 100 : null;
     }

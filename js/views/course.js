@@ -127,7 +127,14 @@ export async function renderCourse(root) {
     need = `
     <section class="card">
       <h2 class="card__title">What do I need?</h2>
-      <div class="grid-2">
+      <section class="card">
+      <h2 class="card__title">Composite exam grading (optional)</h2>
+      <p class="card__hint">Combine quizzes into one exam candidate. Set Lecture to points and choose separate categories.</p>
+      <label class="field">Exam category<select name="compositeExam"><option value="">Off</option>${examOptions()}</select></label>
+      <label class="field">Quiz category<select name="compositeCat"><option value="">—</option>${allCats().map((c) => `<option value="${esc(c.id)}"${c.id === d.compositeCat ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
+      <label class="field">Test multiplier<input name="examMultiplier" inputmode="decimal" value="${esc(String(g.examMultiplier ?? 1))}"></label>
+    </section>
+    <div class="grid-2">
         <label class="field">For a<select data-target>${scale.filter((x) => x.min > 0).map((x) => `<option${x.letter === target ? ' selected' : ''}>${esc(x.letter)}</option>`).join('')}</select></label>
         <label class="field">On<select data-need-item>${pending.map((it) => `<option value="${esc(it.id)}"${it.id === item.id ? ' selected' : ''}>${esc(it.name)}</option>`).join('')}</select></label>
       </div>
@@ -357,6 +364,7 @@ function openGradingSheet(course) {
     })),
     scale: (g.scale?.length ? g.scale : SCALE_PM).map((x) => ({ ...x })),
     examCat: g.examCat || '',
+    compositeCat: g.compositeCat || '',
   };
   const allCats = () => d.groups.flatMap((gr) => gr.categories);
 
@@ -439,6 +447,7 @@ function openGradingSheet(course) {
 
   openSheet('Grade setup', html, (sheet, close) => {
     const q = (sel) => sheet.querySelector(sel);
+    q('[name="compositeExam"]').value = d.compositeCat ? d.examCat : '';
     const readRows = () => {
       sheet.querySelectorAll('[data-gweight]').forEach((el) => {
         const gr = d.groups[Number(el.dataset.gweight)];
@@ -477,6 +486,7 @@ function openGradingSheet(course) {
       if (e.target.name === 'replaceLowest') q('[data-exam-cat]').hidden = !e.target.checked;
       if (e.target.name === 'passFail') q('[data-pass-min]').hidden = !e.target.checked;
       if (e.target.name === 'examCat') d.examCat = e.target.value;
+      if (e.target.name === 'compositeCat') d.compositeCat = e.target.value;
     });
     sheet.addEventListener('click', (e) => {
       const t = e.target;
@@ -512,13 +522,23 @@ function openGradingSheet(course) {
       if (!scale.length) { toast('Add at least one letter.'); return undefined; }
       const liveIds = new Set(groups.flatMap((gr) => gr.categories.map((c) => c.id)));
       const credits = Number(q('[name="credits"]').value);
+      const compExam = q('[name="compositeExam"]').value;
+      const compQuiz = q('[name="compositeCat"]').value;
+      const lecture = groups.find((gr) => gr.id === 'lecture');
+      if (compExam && (!compQuiz || compExam === compQuiz || lecture?.mode !== 'points'
+        || !lecture.categories.some((c) => c.id === compExam)
+        || !lecture.categories.some((c) => c.id === compQuiz))) {
+        toast('Choose different exam and quiz categories in points-based Lecture.'); return undefined;
+      }
       saveGrading(course.id, {
         groups, scale,
         credits: Number.isNaN(credits) ? 0 : credits,
         passFail: q('[name="passFail"]').checked,
         passMin: Number(q('[name="passMin"]').value) || 70,
         replaceLowest: q('[name="replaceLowest"]').checked,
-        examCat: liveIds.has(d.examCat) ? d.examCat : '',
+        examCat: liveIds.has(compExam || d.examCat) ? (compExam || d.examCat) : '',
+        compositeCat: compExam && liveIds.has(compQuiz) ? compQuiz : '',
+        examMultiplier: Number(q('[name="examMultiplier"]').value) > 0 ? Number(q('[name="examMultiplier"]').value) : 1,
       });
       close();
       play('pop');

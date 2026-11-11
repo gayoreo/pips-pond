@@ -189,6 +189,29 @@
     check('pending points stay out of the live grade', courseGrade(pointsCourse).pct, 100);
     check('what-do-I-need can still include a selected pending assignment', scoreNeeded(pointsCourse, 'lab-3', 90).need, 75);
 
+    const chem = { grading: { groups: [
+      { id:'lecture',name:'Lecture',weight:75,mode:'points',categories:[
+        {id:'ex',name:'Exams',drop:1},{id:'quiz',name:'Quizzes'},{id:'attendance',name:'Attendance'}]},
+      {id:'lab',name:'Lab',weight:25,mode:'points',categories:[{id:'labwork',name:'Lab'}]}
+    ],examCat:'ex',compositeCat:'quiz',examMultiplier:1.625 },grades:[
+      {id:'e1',catId:'ex',earned:85,possible:100},
+      {id:'e2',catId:'ex',earned:45,possible:100},
+      {id:'e3',catId:'ex',earned:78,possible:100},
+      {id:'fin',catId:'ex',earned:75,possible:100,isFinal:true},
+      {id:'q1',catId:'quiz',earned:8,possible:10},
+      {id:'q2',catId:'quiz',earned:7.4,possible:10},
+      {id:'a',catId:'attendance',earned:80,possible:100},
+      {id:'l',catId:'labwork',earned:205,possible:250},
+    ]};
+    const chemResult = courseGrade(chem);
+    check('chemistry drops exam 2',chemResult.cats.ex.dropped.includes('e2'),true);
+    check('chemistry retains 400 raw test points',chemResult.cats.ex.possible,400);
+    check('chemistry keeps individual quizzes',chem.grades.filter(x=>x.catId==='quiz').length,2);
+    check('chemistry syllabus result',chemResult.pct,79.69);
+    const lowQuiz = {...chem,grades:chem.grades.map(x=>x.catId==='quiz'?{...x,earned:2}:x)};
+    check('low quiz composite dropped together',courseGrade(lowQuiz).cats.ex.dropped.includes('composite:quiz'),true);
+    check('legacy point grading unaffected',courseGrade(pointsCourse).pct,100);
+
     document.getElementById('summary').textContent = `${passed} passed, ${failed} failed`;
   </script>
 </body>

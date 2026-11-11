@@ -16,6 +16,7 @@ import { openSheet } from '../ui/sheet.js';
 import { beginCourseSetup } from './courseSetup.js';
 import { openTaskSheet } from './study.js';
 import { openDeck } from './decks.js';
+import { openGradeImport } from './gradeImport.js';
 
 const COURSE_KEY = 'course:id';
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -154,6 +155,7 @@ export async function renderCourse(root) {
     </section>
     <div class="row">
       <button type="button" class="btn-sketch btn-sketch--small" data-grading>grade setup</button>
+      <button type="button" class="btn-sketch btn-sketch--small" data-import-grades>import CSV grades</button>
       <button type="button" class="btn-sketch btn-sketch--small" data-edit-course>class times &amp; exams</button>
     </div>
 
@@ -211,6 +213,7 @@ export async function renderCourse(root) {
     if (t.closest('[data-back]')) return backToGrades();
     if (t.closest('[data-edit-course]')) return beginCourseSetup(course.id);
     if (t.closest('[data-grading]')) return openGradingSheet(course);
+    if (t.closest('[data-import-grades]')) return openGradeImport(course);
     const tpl = t.closest('[data-template]');
     if (tpl) {
       if (compExam && compFinal && (compFinal === compExam || compFinal === compQuiz

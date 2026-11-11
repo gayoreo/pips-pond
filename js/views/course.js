@@ -108,7 +108,7 @@ export async function renderCourse(root) {
   const groupSection = (gr) => `
     <div class="grade-group">
       <div class="grade-group__head">
-        <h2 class="grade-group__name">${esc(gr.name)} <span class="muted">${gr.weight}% of grade · ${gr.mode === 'points' ? 'points' : 'weighted'}</span></h2>
+        <h2 class="grade-group__name">${esc(gr.name)} <span class="muted">${(gr.weight / (g.groups.reduce((sum, group) => sum + (Number(group.weight) || 0), 0) || 100) * 100).toFixed(1).replace(/\.0$/, '')}% of grade · ${gr.mode === 'points' ? 'points' : 'weighted'}</span></h2>
         <span class="grade-group__pct">${catPct(gr.pct)}</span>
       </div>
       ${gr.cats.length ? gr.cats.map((ci) => catCard(gr, ci)).join('') : `<p class="card__hint">Nothing in ${esc(gr.name)} yet. Add a category in grade setup.</p>`}
@@ -213,6 +213,10 @@ export async function renderCourse(root) {
     if (t.closest('[data-grading]')) return openGradingSheet(course);
     const tpl = t.closest('[data-template]');
     if (tpl) {
+      if (compExam && compFinal && (compFinal === compExam || compFinal === compQuiz
+        || !lecture.categories.some((c) => c.id === compFinal))) {
+        toast('Choose a separate final exam category in Lecture.'); return undefined;
+      }
       saveGrading(course.id, { ...starterGrading(tpl.dataset.template), scale: g.scale });
       play('pop');
       return toast('Set up. Tap “grade setup” to add a Lab or change weights.');
@@ -358,6 +362,7 @@ function openGradingSheet(course) {
     scale: (g.scale?.length ? g.scale : SCALE_PM).map((x) => ({ ...x })),
     examCat: g.examCat || '',
     compositeCat: g.compositeCat || '',
+    compositeFinalCat: g.compositeFinalCat || '',
   };
   const allCats = () => d.groups.flatMap((gr) => gr.categories);
 
@@ -405,6 +410,7 @@ function openGradingSheet(course) {
     return sum === 100 ? 'Lecture and Lab add up to 100%.' : `Lecture and Lab add up to ${sum}%. They should total 100% (a lecture-only class is Lecture 100, Lab 0).`;
   };
   const examOptions = () => allCats().map((c) => `<option value="${esc(c.id)}"${c.id === d.examCat ? ' selected' : ''}>${esc(c.name)}</option>`).join('');
+  const catOptions = (selected) => allCats().map((c) => `<option value="${esc(c.id)}"${c.id === selected ? ' selected' : ''}>${esc(c.name)}</option>`).join('');
   const scaleRows = () => d.scale.map((x, i) => `
     <div class="grade-row grade-row--scale" data-scale="${i}">
       <input data-s="letter" maxlength="3" value="${esc(x.letter)}" aria-label="Letter">
@@ -427,6 +433,7 @@ function openGradingSheet(course) {
       <p class="card__hint">Combine quizzes into one exam candidate. Set Lecture to points and choose separate categories.</p>
       <label class="field">Exam category<select name="compositeExam"><option value="">Off</option>${examOptions()}</select></label>
       <label class="field">Quiz category<select name="compositeCat"><option value="">—</option>${allCats().map((c) => `<option value="${esc(c.id)}"${c.id === d.compositeCat ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
+      <label class="field">Final exam category (always counted)<select name="compositeFinalCat"><option value="">Final is already in Exams</option>${catOptions(d.compositeFinalCat)}</select></label>
       <label class="field">Test multiplier<input name="examMultiplier" inputmode="decimal" value="${esc(String(g.examMultiplier ?? 1))}"></label>
     </section>
     <div class="grid-2">
@@ -474,6 +481,12 @@ function openGradingSheet(course) {
       q('[data-groups]').innerHTML = d.groups.map((_, gi) => groupCard(gi)).join('');
       q('[data-groups-note]').textContent = groupsNote();
       if (q('[name="examCat"]')) q('[name="examCat"]').innerHTML = `<option value="">—</option>${examOptions()}`;
+      const compExam = q('[name="compositeExam"]');
+      const compQuiz = q('[name="compositeCat"]');
+      const compFinal = q('[name="compositeFinalCat"]');
+      compExam.innerHTML = `<option value="">Off</option>${catOptions(compExam.value || d.examCat)}`;
+      compQuiz.innerHTML = `<option value="">—</option>${catOptions(compQuiz.value || d.compositeCat)}`;
+      compFinal.innerHTML = `<option value="">Final is already in Exams</option>${catOptions(compFinal.value || d.compositeFinalCat)}`;
     };
     const redrawScale = () => { q('[data-scale-rows]').innerHTML = scaleRows(); };
 
@@ -524,6 +537,7 @@ function openGradingSheet(course) {
       const credits = Number(q('[name="credits"]').value);
       const compExam = q('[name="compositeExam"]').value;
       const compQuiz = q('[name="compositeCat"]').value;
+      const compFinal = q('[name="compositeFinalCat"]').value;
       const lecture = groups.find((gr) => gr.id === 'lecture');
       if (compExam && (!compQuiz || compExam === compQuiz || lecture?.mode !== 'points'
         || !lecture.categories.some((c) => c.id === compExam)
@@ -538,6 +552,7 @@ function openGradingSheet(course) {
         replaceLowest: q('[name="replaceLowest"]').checked,
         examCat: liveIds.has(compExam || d.examCat) ? (compExam || d.examCat) : '',
         compositeCat: compExam && liveIds.has(compQuiz) ? compQuiz : '',
+        compositeFinalCat: compExam && liveIds.has(compFinal) ? compFinal : '',
         examMultiplier: Number(q('[name="examMultiplier"]').value) > 0 ? Number(q('[name="examMultiplier"]').value) : 1,
       });
       close();

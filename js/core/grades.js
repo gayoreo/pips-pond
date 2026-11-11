@@ -21,7 +21,7 @@ export const DEFAULT_GPA_SCALE = {
 // The two built-in groups, in order. Lecture carries the whole grade until you split off a Lab.
 export const GROUP_DEFS = [{ id: 'lecture', name: 'Lecture' }, { id: 'lab', name: 'Lab' }];
 
-export const DEFAULT_GRADING = { scale: SCALE_PM, credits: 3, passFail: false, passMin: 70, replaceLowest: false, examCat: '', compositeCat: '', examMultiplier: 1 };
+export const DEFAULT_GRADING = { scale: SCALE_PM, credits: 3, passFail: false, passMin: 70, replaceLowest: false, examCat: '', compositeCat: '', compositeFinalCat: '', examMultiplier: 1 };
 
 const num = (v) => (v === '' || v === null || v === undefined || Number.isNaN(Number(v)) ? null : Number(v));
 
@@ -117,6 +117,8 @@ export function courseGrade(course, override = {}) {
     && g.examCat !== g.compositeCat
     && lecture.categories.some((c) => c.id === g.examCat)
     && lecture.categories.some((c) => c.id === g.compositeCat);
+  const finalCat = composite && g.compositeFinalCat !== g.examCat && g.compositeFinalCat !== g.compositeCat
+    && lecture.categories.some((c) => c.id === g.compositeFinalCat) ? g.compositeFinalCat : '';
   if (composite) {
     const exam = lecture.categories.find((c) => c.id === g.examCat);
     const quiz = cats[g.compositeCat];
@@ -124,6 +126,10 @@ export function courseGrade(course, override = {}) {
       id: it.id, earned: num(it.earned) + (num(it.extra) ?? 0),
       possible: num(it.possible), isFinal: Boolean(it.isFinal),
     }));
+    if (finalCat) candidates.push(...byCat(finalCat).filter(isGraded).map((it) => ({
+      id: it.id, earned: num(it.earned) + (num(it.extra) ?? 0),
+      possible: num(it.possible), isFinal: true,
+    })));
     if (quiz.possible > 0) candidates.push({
       id: 'composite:' + g.compositeCat, earned: quiz.pct * 100,
       possible: 100, isFinal: false,
@@ -159,7 +165,7 @@ export function courseGrade(course, override = {}) {
     if (gr.mode === 'points') {
       // Only points that have actually been graded belong in the live denominator.
       // Configured category totals are the planned semester totals, not future zeroes.
-      const counted = regular.filter((c) => !(composite && c.id === g.compositeCat));
+      const counted = regular.filter((c) => !(composite && (c.id === g.compositeCat || c.id === finalCat)));
       const scale = Number(g.examMultiplier);
       const factor = (c) => composite && c.id === g.examCat && Number.isFinite(scale) && scale > 0 ? scale : 1;
       const P = counted.reduce((sum,c) => sum + cats[c.id].possible * factor(c),0);

@@ -210,6 +210,33 @@
     check('chemistry syllabus result',chemResult.pct,79.69);
     const lowQuiz = {...chem,grades:chem.grades.map(x=>x.catId==='quiz'?{...x,earned:2}:x)};
     check('low quiz composite dropped together',courseGrade(lowQuiz).cats.ex.dropped.includes('composite:quiz'),true);
+    // A final kept in its own category is included in the scaled exam pool, never dropped.
+    const separateFinal = {
+      ...chem,
+      grading: { ...chem.grading,
+        compositeFinalCat: 'final',
+        groups: chem.grading.groups.map(gr => gr.id === 'lecture'
+          ? { ...gr, categories: [...gr.categories, { id:'final',name:'Final Exam',total:100 }] }
+          : gr),
+      },
+      grades: chem.grades.map(it => it.id === 'fin' ? { ...it, catId:'final' } : it),
+    };
+    const separateResult = courseGrade(separateFinal);
+    check('separate final gives syllabus total',separateResult.pct,79.69);
+    check('separate final cannot be dropped',separateResult.cats.ex.dropped.includes('fin'),false);
+    check('separate final counted once',separateResult.cats.ex.possible,400);
+    // Weighted lecture/lab and classic final-replacement behavior remain independent.
+    const weighted = { grading:{ groups:[
+      {id:'lecture',weight:75,mode:'weighted',categories:[{id:'exam',weight:100,drop:0}]},
+      {id:'lab',weight:25,mode:'weighted',categories:[{id:'work',weight:100}]}
+    ],replaceLowest:true,examCat:'exam'},grades:[
+      {id:'mid1',catId:'exam',earned:50,possible:100},
+      {id:'mid2',catId:'exam',earned:80,possible:100},
+      {id:'final',catId:'exam',earned:90,possible:100,isFinal:true},
+      {id:'lab1',catId:'work',earned:100,possible:100}
+    ]};
+    check('weighted final replacement remains active',courseGrade(weighted).cats.exam.earned,260);
+    check('weighted group grading unchanged',courseGrade(weighted).pct,90);
     check('legacy point grading unaffected',courseGrade(pointsCourse).pct,100);
 
     document.getElementById('summary').textContent = `${passed} passed, ${failed} failed`;

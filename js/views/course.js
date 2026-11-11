@@ -127,14 +127,7 @@ export async function renderCourse(root) {
     need = `
     <section class="card">
       <h2 class="card__title">What do I need?</h2>
-      <section class="card">
-      <h2 class="card__title">Composite exam grading (optional)</h2>
-      <p class="card__hint">Combine quizzes into one exam candidate. Set Lecture to points and choose separate categories.</p>
-      <label class="field">Exam category<select name="compositeExam"><option value="">Off</option>${examOptions()}</select></label>
-      <label class="field">Quiz category<select name="compositeCat"><option value="">—</option>${allCats().map((c) => `<option value="${esc(c.id)}"${c.id === d.compositeCat ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
-      <label class="field">Test multiplier<input name="examMultiplier" inputmode="decimal" value="${esc(String(g.examMultiplier ?? 1))}"></label>
-    </section>
-    <div class="grid-2">
+      <div class="grid-2">
         <label class="field">For a<select data-target>${scale.filter((x) => x.min > 0).map((x) => `<option${x.letter === target ? ' selected' : ''}>${esc(x.letter)}</option>`).join('')}</select></label>
         <label class="field">On<select data-need-item>${pending.map((it) => `<option value="${esc(it.id)}"${it.id === item.id ? ' selected' : ''}>${esc(it.name)}</option>`).join('')}</select></label>
       </div>
@@ -429,6 +422,13 @@ function openGradingSheet(course) {
     <label class="row"><span>Final exam replaces the lowest exam</span><input type="checkbox" class="switch" name="replaceLowest"${g.replaceLowest ? ' checked' : ''}></label>
     <label class="field" data-exam-cat${g.replaceLowest ? '' : ' hidden'}>Exams are in<select name="examCat"><option value="">—</option>${examOptions()}</select></label>
 
+    <section class="card">
+      <h2 class="card__title">Composite exam grading (optional)</h2>
+      <p class="card__hint">Combine quizzes into one exam candidate. Set Lecture to points and choose separate categories.</p>
+      <label class="field">Exam category<select name="compositeExam"><option value="">Off</option>${examOptions()}</select></label>
+      <label class="field">Quiz category<select name="compositeCat"><option value="">—</option>${allCats().map((c) => `<option value="${esc(c.id)}"${c.id === d.compositeCat ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
+      <label class="field">Test multiplier<input name="examMultiplier" inputmode="decimal" value="${esc(String(g.examMultiplier ?? 1))}"></label>
+    </section>
     <div class="grid-2">
       <label class="field">Credits<input name="credits" inputmode="decimal" value="${esc(String(g.credits ?? 3))}"></label>
       <label class="field" data-pass-min${g.passFail ? '' : ' hidden'}>Pass at<input name="passMin" inputmode="decimal" value="${esc(String(g.passMin ?? 70))}"></label>

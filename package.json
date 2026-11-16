@@ -7,7 +7,8 @@
     "dev": "node server.js",
     "start": "node server.js",
     "build": "node -e 'console.log(\"Build complete\")'",
-    "lint": "node -e 'console.log(\"Lint complete\")'"
+    "lint": "node -e 'console.log(\"Lint complete\")'",
+    "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
     "express": "^4.21.2"
